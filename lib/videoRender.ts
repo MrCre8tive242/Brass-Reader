@@ -534,7 +534,7 @@ async function encode(job: VideoJob, route: Extract<Route, { kind: 'mp4' | 'webm
       await feedAudio(p.t + 0.5);
       const vf = new VideoFrame(drawer.canvas, { timestamp: Math.round((k / VIDEO_FPS) * 1e6), duration: Math.round(1e6 / VIDEO_FPS) });
       try { vEnc.encode(vf, { keyFrame: k % (VIDEO_FPS * 2) === 0 }); } finally { vf.close(); }
-      while (vEnc.encodeQueueSize > 6) { await tick(); if (err) throw err; }
+      while (vEnc.encodeQueueSize > 3) { await tick(); if (err) throw err; }
       if (k % 15 === 0) { progress(0.04 + 0.93 * (k / frames), 'Drawing the video'); await tick(); }
     }
     await feedAudio(Infinity);

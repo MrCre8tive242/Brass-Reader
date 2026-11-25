@@ -98,6 +98,15 @@ describe('count-in before the music', () => {
     expect(framePos(p, 60, 90, 30, lead).count).toBeUndefined();
   });
 
+  it('6/8 is counted in two', () => {
+    const t = buildTimeline(fx('qa-timesig.musicxml')); // starts in 6/8: two dotted-quarter beats, 3 quarters long
+    const lead = countInLead(t, 90);
+    expect(lead.clicks.map((c) => c.n)).toEqual([1, 2]);
+    expect(lead.seconds).toBeCloseTo(2, 6); // 3 quarters at 90 a minute
+    expect(lead.clicks[1].t).toBeCloseTo(1, 6);
+    expect(framePos(t, 90, 31, 30, lead).count).toEqual({ i: 1, beats: [1, 2] });
+  });
+
   it('the tempo sets the length of the count', () => {
     expect(countInLead(tl, 240).seconds).toBe(1);
     expect(countInLead(tl, 60).seconds).toBe(4);

@@ -5,7 +5,7 @@ import { useModal } from './useModal';
 import type { FingerStyle } from '@/lib/fingerStyle';
 import { countInLead, estimateBytes, NO_LEAD, videoFileName, videoSeconds, VIDEO_TAIL_S, WARN_BYTES, type VideoOrientation, type VideoView } from '@/lib/videoPlan';
 import type { VideoJob, VideoResult } from '@/lib/videoRender';
-import { canShareFile, isIOS, saveWays, type Route, type SaveWays } from '@/lib/videoSupport';
+import { canShareFile, isApple, isIOS, saveWays, type Route, type SaveWays } from '@/lib/videoSupport';
 import type { Timeline } from '@/lib/timeline';
 
 export interface VideoChoices { view: VideoView; orientation: VideoOrientation; style: FingerStyle; drums: boolean; countIn: boolean }
@@ -49,7 +49,7 @@ export default function VideoDialog({ title, instrumentName, bpm, tl, slide, has
   const [res, setRes] = useState<Done | null>(null);
   const [err, setErr] = useState('');
   const [shareMsg, setShareMsg] = useState('');
-  const [route, setRoute] = useState<Route | null>(null);
+  const [routes, setRoutes] = useState<Record<VideoOrientation, Route> | null>(null);
   const ctl = useRef<AbortController | null>(null);
   const urlRef = useRef<string | null>(null);
   const preview = useRef<HTMLDivElement>(null);
@@ -65,15 +65,19 @@ export default function VideoDialog({ title, instrumentName, bpm, tl, slide, has
   // what this browser can make, known before the button is tapped (the real-time way needs sound started by that tap)
   useEffect(() => {
     let off = false;
-    setRoute(null);
-    void import('@/lib/videoRender').then((m) => {
+    const none: Route = { kind: 'none' };
+    void import('@/lib/videoRender').then(async (m) => {
       // for checking the sound from outside (tests): the pieces it is made in must join without a seam
       const w = window as unknown as Record<string, unknown>;
       if (w.__brTest) w.__brVideoLib = m;
-      return m.videoRoute(c.orientation);
-    }).then((r) => { if (!off) setRoute(r); }, () => { if (!off) setRoute({ kind: 'none' }); });
+      return { portrait: await m.videoRoute('portrait'), landscape: await m.videoRoute('landscape') };
+    }).then((r) => { if (!off) setRoutes(r); }, () => { if (!off) setRoutes({ portrait: none, landscape: none }); });
     return () => { off = true; };
-  }, [c.orientation]);
+  }, []);
+  const route = routes ? routes[c.orientation] : null;
+  // a phone's encoder may take one shape and not the other
+  const other: VideoOrientation = c.orientation === 'portrait' ? 'landscape' : 'portrait';
+  const otherIsMp4 = !!routes && route?.kind !== 'mp4' && routes[other].kind === 'mp4';
 
   const lead = useMemo(() => (c.countIn ? countInLead(tl, bpm) : NO_LEAD), [c.countIn, tl, bpm]);
   const seconds = videoSeconds(tl, bpm, lead);
@@ -89,8 +93,9 @@ export default function VideoDialog({ title, instrumentName, bpm, tl, slide, has
     if (!route || route.kind === 'none') return;
     const nav = navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } };
     const ios = isIOS(nav.userAgent ?? '', nav.platform ?? '', nav.maxTouchPoints ?? 0);
-    // sound for the real-time way has to be started by this very tap (also kept ready on an iPhone in case the quick way fails)
-    if ((route.kind === 'realtime' || ios) && (!live.current || live.current.state === 'closed')) {
+    // sound for the real-time way has to be started by this very tap (also kept ready on Apple devices in case the quick way fails)
+    const apple = isApple(nav.userAgent ?? '', nav.platform ?? '', nav.maxTouchPoints ?? 0);
+    if ((route.kind === 'realtime' || apple) && (!live.current || live.current.state === 'closed')) {
       try {
         const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
         live.current = new AC();
@@ -194,6 +199,7 @@ export default function VideoDialog({ title, instrumentName, bpm, tl, slide, has
                 </label>
               </div>
               <p className={`small ${info.warn ? 'vnote' : 'muted'}`} data-testid="video-route" data-route={route ? (route.kind === 'mp4' ? `mp4-${route.audio}` : route.kind === 'realtime' ? `realtime-${route.ext}` : route.kind) : ''}>{info.text}</p>
+              {otherIsMp4 && <p className="muted small" data-testid="video-shape-tip">Tip: {other === 'landscape' ? 'Landscape' : 'Portrait'} can be made as an MP4 on this device, and faster.</p>}
               {!cannot && <p className="muted small" data-testid="video-estimate">{mmss(seconds)} long, up to about {mb(bytes)}{bytes > WARN_BYTES ? '. That is a lot for a phone: it may run out of memory. Try a faster tempo or a shorter song.' : '.'}</p>}
             </>
           )}
@@ -211,8 +217,8 @@ export default function VideoDialog({ title, instrumentName, bpm, tl, slide, has
             <div className="vdone" data-testid="video-done" data-kind={res.kind} data-ext={res.ext} data-bytes={res.bytes} data-duration={res.durationS.toFixed(2)}>
               <p><strong>Your video is ready.</strong> {res.format}. {mb(res.bytes)}, {mmss(res.durationS)}, {res.width}×{res.height}.</p>
               {res.note && <p className="small vnote">{res.note}</p>}
+              {res.audio.engine === 'synth' && !res.silent && <p className="small vnote" data-testid="video-synth">The horn samples could not be loaded, so this video has the simple synth sound. Open the score once with a signal (the samples are then kept on the phone) and make it again.</p>}
               {res.silent && <p className="small vnote" data-testid="video-silent">This video has no sound: every part is muted in Band, and there are no drums.</p>}
-              <video className="vplay" src={res.url} controls playsInline preload="metadata" data-testid="video-player" />
               <div className="vsave">
                 {res.ways.share && (
                   <button type="button" className={`btn${res.ways.primary === 'share' ? ' primary' : ''}`} onClick={share} data-testid="video-share">{res.ext === 'mp4' ? 'Save to Photos or share' : 'Share'}</button>
@@ -221,6 +227,7 @@ export default function VideoDialog({ title, instrumentName, bpm, tl, slide, has
               </div>
               {res.ways.share && res.ways.primary === 'share' && res.ext === 'mp4' && <p className="muted small">Tap “Save to Photos or share”, then “Save Video” to keep it in Photos, or pick WhatsApp to send it. “Download file” puts it in the Files app.</p>}
               {shareMsg && <p className="small vnote" role="status">{shareMsg}</p>}
+              <video className="vplay" src={res.url} controls playsInline preload="metadata" data-testid="video-player" />
               {res.ways.share && <p className="muted small vname">{res.name}</p>}
             </div>
           )}

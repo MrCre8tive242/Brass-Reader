@@ -81,8 +81,9 @@ function mulberry(seed: number): () => number {
 export class AudioRenderer {
   readonly totalFrames: number;
   readonly segments: Segment[];
-  /** What the horns were played with (known after the first piece). */
-  engine: 'soundfont' | 'synth' | null = null;
+  /** What the horns were played with so far: the samples, or (for at least one instrument) the simple synth. Null before any horn sounded. */
+  get engine(): 'soundfont' | 'synth' | null { return this.synthOnly.size ? 'synth' : this.sampled ? 'soundfont' : null; }
+  private sampled = false;
   private notes: Note[] = [];
   private hits: Hit[] = [];
   private clicks: { t: number; accent: boolean }[];
@@ -167,7 +168,7 @@ export class AudioRenderer {
       this.synthOnly.add(id);
       byId.set(id, new SynthVoice(ctx, master));
     }
-    if (this.engine === null && ids.length) this.engine = this.synthOnly.size ? 'synth' : 'soundfont';
+    if (byId.size > this.synthOnly.size || [...byId.keys()].some((id) => !this.synthOnly.has(id))) this.sampled = true;
     for (const n of notes) {
       const id = this.job.partInstruments[n.part] ?? this.job.partInstruments[0];
       byId.get(id)?.start({ note: n.midi, time: Math.max(0, n.t - t0), duration: n.d, velocity: n.vel });

@@ -181,14 +181,35 @@ test.describe('Download video', () => {
     const buf = await saved(page);
     expect(buf.readUInt32BE(0)).toBe(0x1a45dfa3);
     expect(fileDuration(buf)!.seconds).toBeCloseTo(10, 0);
+    if (hasFfprobe) {
+      // written block by block with corrections at the start: a real player must still read it without a complaint
+      const p = probe(buf, 'webm');
+      expect(p.streams.find((s) => s.width)).toMatchObject({ codec_name: 'vp9', width: 1080, height: 1920 });
+      expect(p.streams.find((s) => s.sample_rate)).toMatchObject({ codec_name: 'opus' });
+      expect(p.decodeErrors).toBe('');
+    }
     for (let s = 0; s < 9; s++) expect(v.rms[s], `second ${s}`).toBeGreaterThan(0.004);
+  });
+
+  test('a phone whose encoder only takes one shape is told which shape gives an MP4', async ({ page }) => {
+    await page.addInitScript(() => {
+      const real = VideoEncoder.isConfigSupported.bind(VideoEncoder);
+      VideoEncoder.isConfigSupported = (c: VideoEncoderConfig) => (c.codec.startsWith('avc1') && c.height > c.width ? Promise.resolve({ supported: false, config: c }) : real(c));
+    });
+    await openDialog(page, 'v-shape', 240);
+    await expect(page.getByTestId('video-route')).toHaveAttribute('data-route', 'webm');
+    await expect(page.getByTestId('video-shape-tip')).toContainText('Landscape can be made as an MP4');
+    await page.getByTestId('video-dialog').getByRole('radio', { name: /Landscape/ }).click();
+    await expect(page.getByTestId('video-route')).toHaveAttribute('data-route', /^mp4-/);
+    await expect(page.getByTestId('video-shape-tip')).toHaveCount(0);
   });
 
   test('a browser without WebCodecs records in real time and says so before and after', async ({ page }) => {
     await page.addInitScript(() => { delete (window as unknown as Record<string, unknown>).VideoEncoder; delete (window as unknown as Record<string, unknown>).AudioEncoder; });
-    await openDialog(page, 'v-rt', 240);
+    // a short tune (4 bars: 4 s at 240, a count-in bar of 1 s, 1 s tail), because this one really takes its time
+    await openDialog(page, 'v-rt', 240, {}, 'scale.musicxml');
     await expect(page.getByTestId('video-route')).toHaveAttribute('data-route', /^realtime-/);
-    await expect(page.getByTestId('video-route')).toContainText('takes as long as the song (0:10)');
+    await expect(page.getByTestId('video-route')).toContainText('takes as long as the song (0:06)');
     await page.getByTestId('video-make').click();
     await expect(page.getByTestId('video-progress')).toContainText(/real time/i, { timeout: 60_000 });
     await expect(page.getByTestId('video-done')).toBeVisible({ timeout: 120_000 });
@@ -196,15 +217,15 @@ test.describe('Download video', () => {
     await expect(page.getByTestId('video-done')).toContainText('real time');
     const v = await info(page);
     expect(v.bytes).toBeGreaterThan(10_000);
-    expect(v.durationS).toBeCloseTo(10, 0);
-    for (let s = 0; s < 9; s++) expect(v.rms[s], `second ${s}`).toBeGreaterThan(0.004);
+    expect(v.durationS).toBeCloseTo(6, 0);
+    for (let s = 0; s < 5; s++) expect(v.rms[s], `second ${s}`).toBeGreaterThan(0.004);
     const buf = await saved(page);
     expect(buf.length).toBeGreaterThan(10_000);
     if (hasFfprobe) {
       // really about as long as the song: recorded by the clock
       const p = probe(buf, v.ext);
-      expect(p.seconds).toBeGreaterThan(9.3);
-      expect(p.seconds).toBeLessThan(11.5);
+      expect(p.seconds).toBeGreaterThan(5.5);
+      expect(p.seconds).toBeLessThan(7.5);
       expect(p.streams.find((s) => s.width)).toMatchObject({ width: 1080, height: 1920 });
       expect(p.streams.some((s) => s.sample_rate)).toBe(true);
     }
@@ -219,7 +240,7 @@ test.describe('Download video', () => {
         return real.call(this, f, o);
       };
     });
-    await openDialog(page, 'v-fall', 240);
+    await openDialog(page, 'v-fall', 240, {}, 'scale.musicxml');
     const v = await makeIt(page);
     expect(v.kind).toBe('realtime');
     await expect(page.getByTestId('video-done')).toContainText('recorded in real time');
@@ -235,6 +256,15 @@ test.describe('Download video', () => {
     await expect(page.getByTestId('video-progress')).toHaveCount(0);
     await expect(page.getByTestId('video-done')).toHaveCount(0);
     await expect(page.getByTestId('video-make')).toBeVisible();
+  });
+
+  test('no signal and no saved samples: the video is made with the synth sound, and says so', async ({ page }) => {
+    await page.route(/gleitz|midi-js-soundfonts|MusyngKite/i, (r) => r.abort());
+    await openDialog(page, 'v-synth', 240);
+    const v = await makeIt(page);
+    expect(v.engine).toBe('synth');
+    for (let s = 1; s < 9; s++) expect(v.rms[s], `second ${s}`).toBeGreaterThan(0.004);
+    await expect(page.getByTestId('video-synth')).toContainText('simple synth sound');
   });
 
   test('a video with every part muted says that it has no sound', async ({ page }) => {
@@ -313,7 +343,7 @@ test.describe('Download video on an iPhone (pretended: Safari\'s answers, this b
       const AC = window.AudioContext;
       window.AudioContext = class extends AC { constructor(o?: AudioContextOptions) { super(o); w.__ctxInTap.push(navigator.userActivation?.isActive ?? false); } } as typeof AudioContext;
     });
-    await openDialog(page, 'v-ios-old', 240);
+    await openDialog(page, 'v-ios-old', 240, {}, 'scale.musicxml');
     await expect(page.getByTestId('video-route')).toHaveAttribute('data-route', 'realtime-mp4');
     await expect(page.getByTestId('video-route')).toContainText('Keep this page open');
     const before = await page.evaluate(() => (window as unknown as { __ctxInTap: boolean[] }).__ctxInTap.length);
@@ -324,7 +354,7 @@ test.describe('Download video on an iPhone (pretended: Safari\'s answers, this b
     const made = await page.evaluate(() => (window as unknown as { __ctxInTap: boolean[] }).__ctxInTap);
     expect(made.slice(before)).toEqual([true]); // one context, made in the tap, used for the recording
     await expect(page.getByTestId('video-share')).toHaveText('Save to Photos or share');
-    for (let s = 0; s < 9; s++) expect(v.rms[s], `second ${s}`).toBeGreaterThan(0.004);
+    for (let s = 0; s < 5; s++) expect(v.rms[s], `second ${s}`).toBeGreaterThan(0.004);
   });
 
   test('sharing that fails says to use the download', async ({ page }) => {
@@ -332,7 +362,7 @@ test.describe('Download video on an iPhone (pretended: Safari\'s answers, this b
       Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
       Object.defineProperty(navigator, 'share', { configurable: true, value: () => Promise.reject(Object.assign(new Error('no'), { name: 'NotAllowedError' })) });
     });
-    await openDialog(page, 'v-ios-share', 240);
+    await openDialog(page, 'v-ios-share', 240, {}, 'scale.musicxml');
     await makeIt(page);
     await page.getByTestId('video-share').tap();
     await expect(page.getByTestId('video-dialog')).toContainText('Use "Download file" instead');

@@ -14,6 +14,12 @@ export default defineConfig({
       args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
     },
   },
+  // The video tests encode 1080p pictures and keep every core busy. Listed first, they run at the start, next to
+  // screen-only tests, and are over long before the microphone tests (which the squeeze would make miss notes).
+  projects: [
+    { name: 'video', testMatch: /[\\/]video\.spec\.ts$/ },
+    { name: 'app', testIgnore: /[\\/]video\.spec\.ts$/ },
+  ],
   webServer: {
     command: `npx next dev -p ${PORT}`,
     url: `http://localhost:${PORT}`,
