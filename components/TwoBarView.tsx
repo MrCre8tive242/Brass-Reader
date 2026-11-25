@@ -101,7 +101,8 @@ class Core {
     const landscape = width > 560;
     const height = Math.max(150, Math.min(landscape ? 460 : 640, vh - topbar - transport - (landscape ? 28 : 70)));
     const below = p.style === 'off' ? 1.2 : p.style === 'dots' ? 3.6 : 5;
-    return { width, height, stack: !landscape, below };
+    // the two bars always side by side on one line (the player asked for this, also on a phone held upright)
+    return { width, height, stack: false, below };
   }
 
   lookup(): NoteLookup {

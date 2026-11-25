@@ -229,7 +229,7 @@ export class FrameDrawer {
     const j = this.job;
     if (!this.osmd) this.osmd = await makeWindowOsmd(this.host);
     const a = this.area;
-    const stack = a.w < a.h * 1.1;
+    const stack = false; // the two bars side by side, as on screen
     const layout = await drawWindow(this.osmd, j.xml, p.win.bars, { width: a.w, height: a.h - 20, below: this.below(), stack, maxSpace: stack ? 44 : 58, minGapPx: j.style === 'off' ? 0 : 54 });
     const overlay = windowOverlay(layout, p.win.bars, p.win.bars.map((b) => this.labelOf(b)), this.lookup, j.instrument, j.style);
     const svg = this.host.querySelector('svg') as SVGSVGElement;
