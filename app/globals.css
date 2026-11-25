@@ -438,5 +438,16 @@ details.warn summary strong { margin-right: 0.25em; }
 .vdlg-foot { display: flex; gap: 10px; justify-content: flex-end; padding: 10px 18px 16px; border-top: 1px solid var(--line); }
 .vbar { height: 12px; border-radius: 6px; background: var(--panel2); overflow: hidden; border: 1px solid var(--line); }
 .vbar i { display: block; height: 100%; background: var(--accent); transition: width 0.2s linear; }
+.vdone { display: grid; gap: 8px; }
+.vdone p { margin: 0; }
+.vsave { display: grid; gap: 8px; }
 .vdone .btn { width: 100%; word-break: break-word; text-align: center; padding: 8px 14px; }
-@media (orientation: landscape) and (max-height: 520px) { .vdlg-body { gap: 8px; } .vdlg-foot { padding: 6px 18px 8px; } }
+.vname { word-break: break-word; }
+.vnote { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 10px; padding: 8px 10px; margin: 0; }
+.vdlg-checks { display: grid; gap: 2px; }
+.vprev { display: grid; place-items: center; }
+.vprev[hidden] { display: none; }
+.vprev canvas { display: block; max-width: 100%; max-height: 34vh; width: auto; height: auto; border-radius: 10px; border: 1px solid var(--line); }
+.vplay { display: block; width: 100%; max-height: 38vh; border-radius: 10px; background: #000; }
+.vprog p { margin: 6px 0 0; }
+@media (orientation: landscape) and (max-height: 520px) { .vdlg-body { gap: 8px; } .vdlg-foot { padding: 6px 18px 8px; } .vprev canvas { max-height: 42vh; } .vplay { max-height: 46vh; } }

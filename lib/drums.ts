@@ -11,7 +11,8 @@ type Track = (node: AudioScheduledSourceNode) => void;
 
 const STOP_FADE_S = 0.012;
 
-// the kit's sounds, rendered once per audio context and strength and take, then simply played
+// the kit's sounds: worked out once per sample rate, turned into a buffer once per audio context, then simply played
+const kitSamples = new Map<string, Float32Array>();
 const kitCache = new WeakMap<BaseAudioContext, Map<string, AudioBuffer>>();
 function kitBuffer(ctx: BaseAudioContext, inst: KitInst, tier: Tier, take: number): AudioBuffer {
   let m = kitCache.get(ctx);
@@ -19,7 +20,9 @@ function kitBuffer(ctx: BaseAudioContext, inst: KitInst, tier: Tier, take: numbe
   const key = `${inst}${tier}${take}`;
   let b = m.get(key);
   if (!b) {
-    const samples = renderKit(inst, tier, take, ctx.sampleRate);
+    const sk = `${ctx.sampleRate}:${key}`;
+    let samples = kitSamples.get(sk);
+    if (!samples) { samples = renderKit(inst, tier, take, ctx.sampleRate); kitSamples.set(sk, samples); }
     b = ctx.createBuffer(1, samples.length, ctx.sampleRate);
     b.getChannelData(0).set(samples);
     m.set(key, b);
@@ -54,21 +57,31 @@ const HUMAN: Record<KitInst, { pitch: number; level: number }> = {
   bass: { pitch: 0.012, level: 0.07 }, lead: { pitch: 0.016, level: 0.1 }, cowHi: { pitch: 0.003, level: 0.1 }, cowLo: { pitch: 0.003, level: 0.1 }, whistle: { pitch: 0.006, level: 0.06 },
 };
 
+/** Which take of a kit sound is played, and how far its pitch and loudness are nudged. */
+export interface KitDice { take: number; rate: number; level: number }
+
+/** Roll the dice for one hit: another take than `last`, and a touch of pitch and loudness. */
+export function rollKit(inst: KitInst, rand: () => number, last: number | undefined): KitDice {
+  let take = Math.floor(rand() * KIT_TAKES) % KIT_TAKES;
+  if (take === last) take = (take + 1) % KIT_TAKES;
+  const h = HUMAN[inst];
+  return { take, rate: 1 + (rand() * 2 - 1) * h.pitch, level: 1 + (rand() * 2 - 1) * h.level };
+}
+
 /**
  * Play one starter-kit sound at AudioContext time `t`. No two hits are quite the same: another take of the sound
- * than last time, and a touch of pitch and loudness (`rand` is the dice; pass a fixed one for a repeatable result).
+ * than last time, and a touch of pitch and loudness (`rand` is the dice; pass a fixed one for a repeatable result,
+ * or `dice` to say exactly how this hit sounds).
  */
-export function playKit(ctx: BaseAudioContext, out: AudioNode, inst: KitInst, t: number, vel: number, track: Track = () => {}, rand: () => number = Math.random) {
+export function playKit(ctx: BaseAudioContext, out: AudioNode, inst: KitInst, t: number, vel: number, track: Track = () => {}, rand: () => number = Math.random, dice?: KitDice) {
   const tier = tierOf(vel);
-  let take = Math.floor(rand() * KIT_TAKES) % KIT_TAKES;
-  if (take === lastTake[inst]) take = (take + 1) % KIT_TAKES;
-  lastTake[inst] = take;
+  const d = dice ?? rollKit(inst, rand, lastTake[inst]);
+  if (!dice) lastTake[inst] = d.take;
   const src = ctx.createBufferSource();
-  src.buffer = kitBuffer(ctx, inst, tier, take);
-  const h = HUMAN[inst];
-  src.playbackRate.value = 1 + (rand() * 2 - 1) * h.pitch;
+  src.buffer = kitBuffer(ctx, inst, tier, d.take);
+  src.playbackRate.value = d.rate;
   const g = ctx.createGain();
-  g.gain.value = Math.max(0, (vel / TIER_VEL[tier]) * (1 + (rand() * 2 - 1) * h.level));
+  g.gain.value = Math.max(0, (vel / TIER_VEL[tier]) * d.level);
   src.connect(g); g.connect(out);
   src.start(t);
   track(src);
@@ -146,11 +159,11 @@ export class DrumBus {
     n.addEventListener?.('ended', () => this.active.delete(n));
   };
 
-  /** Play a hit at context time `when`. `spq` = seconds per quarter note, `bpm` = the tempo it is played at. */
-  hit(h: DrumHit, when: number, spq: number, bpm: number, q = h.timeQ) {
+  /** Play a hit at context time `when`. `spq` = seconds per quarter note, `bpm` = the tempo it is played at. `dice` fixes how a kit sound comes out. */
+  hit(h: DrumHit, when: number, spq: number, bpm: number, q = h.timeQ, dice?: KitDice) {
     this.log.push({ t: when, q, inst: h.inst, slice: h.slice });
     if (this.log.length > 400) this.log.splice(0, 100);
-    if (h.inst) { playKit(this.ctx, this.voices, h.inst, when, h.vel, this.track); return; }
+    if (h.inst) { playKit(this.ctx, this.voices, h.inst, when, h.vel, this.track, Math.random, dice); return; }
     const src = this.source;
     if (h.slice === undefined || !src?.buffer || !src.groove.slices) return;
     const s = src.groove.slices[h.slice];

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildTimeline } from '@/lib/timeline';
-import { framePos, frameCount, videoSeconds, songSeconds, videoFileName, videoSize, estimateBytes, WARN_BYTES, VIDEO_TAIL_S } from '@/lib/videoPlan';
+import { framePos, frameCount, videoSeconds, songSeconds, videoFileName, videoSize, estimateBytes, countInLead, NO_LEAD, WARN_BYTES, VIDEO_TAIL_S } from '@/lib/videoPlan';
 
 const fx = (n: string) => fs.readFileSync(path.join(__dirname, '../fixtures', n), 'utf8');
 
@@ -54,6 +54,53 @@ describe('video frame timing', () => {
     expect(framePos(p, 60, 0).win.bars).toEqual([1, 2]);
     expect(framePos(p, 60, 29).slot).toBe(0);
     expect(framePos(p, 60, 30).slot).toBe(1);
+  });
+});
+
+describe('count-in before the music', () => {
+  const tl = buildTimeline(fx('scale.musicxml')); // 4/4, 16 quarters
+
+  it('one bar of clicks, counted 1 2 3 4, then the music', () => {
+    const lead = countInLead(tl, 120);
+    expect(lead.seconds).toBe(2);
+    expect(lead.clicks.map((c) => c.t)).toEqual([0, 0.5, 1, 1.5]);
+    expect(lead.clicks.map((c) => c.n)).toEqual([1, 2, 3, 4]);
+    expect(lead.clicks.map((c) => c.accent)).toEqual([true, false, false, false]);
+    expect(videoSeconds(tl, 120, lead)).toBe(2 + 8 + VIDEO_TAIL_S);
+    expect(videoSeconds(tl, 120, NO_LEAD)).toBe(8 + VIDEO_TAIL_S);
+  });
+
+  it('frames of the count-in show the first bars waiting and the beat being counted', () => {
+    const lead = countInLead(tl, 120);
+    const f0 = framePos(tl, 120, 0, 30, lead);
+    expect(f0).toMatchObject({ q: 0, bar: 1, offQ: 0, ended: false, count: { i: 0, beats: [1, 2, 3, 4] } });
+    expect(f0.win.bars).toEqual([1, 2]);
+    expect(framePos(tl, 120, 14, 30, lead).count?.i).toBe(0);
+    expect(framePos(tl, 120, 15, 30, lead).count?.i).toBe(1); // 0.5 s: "2"
+    expect(framePos(tl, 120, 59, 30, lead).count?.i).toBe(3); // "4"
+    // the music starts at 2 s: frame 60 is its first, with no count
+    const f60 = framePos(tl, 120, 60, 30, lead);
+    expect(f60.count).toBeUndefined();
+    expect(f60).toMatchObject({ q: 0, bar: 1 });
+    // everything after is 2 s later than without a count-in
+    const f105 = framePos(tl, 120, 105, 30, lead);
+    expect(f105.q).toBeCloseTo(3);
+    expect(framePos(tl, 120, 120, 30, lead)).toMatchObject({ slot: 1, bar: 2 });
+    expect(framePos(tl, 120, 60 + 8 * 30 + 5, 30, lead)).toMatchObject({ bar: 4, ended: true });
+  });
+
+  it('before a pickup the count runs up to the pickup', () => {
+    const p = buildTimeline(fx('qa-pickup.musicxml')); // 1 quarter pickup in 4/4
+    const lead = countInLead(p, 60);
+    expect(lead.seconds).toBe(3);
+    expect(lead.clicks.map((c) => c.n)).toEqual([1, 2, 3]);
+    expect(framePos(p, 60, 89, 30, lead).count?.i).toBe(2);
+    expect(framePos(p, 60, 90, 30, lead).count).toBeUndefined();
+  });
+
+  it('the tempo sets the length of the count', () => {
+    expect(countInLead(tl, 240).seconds).toBe(1);
+    expect(countInLead(tl, 60).seconds).toBe(4);
   });
 });
 

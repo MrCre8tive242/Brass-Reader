@@ -660,7 +660,7 @@ export default function ScorePage() {
           title={score.title}
           getMidi={() => toMidi(derived!.tl!, bpm, INSTRUMENTS[target].program, score.title, parts.map((p, i) => ({ name: p.name, program: INSTRUMENTS[i === myIdx ? target : p.instrument].program })), drums.inMidi && groove && drums.on ? drumEvents : undefined)}
           getXml={() => derived!.exportXml}
-          onVideo={derived?.tl && !derived.err ? () => setVideoOpen(true) : undefined}
+          onVideo={derived?.tl && !derived.err ? () => { if (player.current?.isPlaying) player.current.pause(); setVideoOpen(true); } : undefined}
         />
       </main>
       <PracticeSheet open={practiceOpen} onClose={() => setPracticeOpen(false)} tabs={practiceTabs}>
@@ -732,12 +732,12 @@ export default function ScorePage() {
           tl={derived.tl}
           slide={target === 'trombone'}
           hasDrums={!!groove}
-          initial={{ view: viewMode === 'twobar' ? 'twobar' : 'full', orientation: 'portrait', style: fingerStyle, drums: drums.on }}
+          initial={{ view: viewMode === 'twobar' ? 'twobar' : 'full', orientation: 'portrait', style: fingerStyle, drums: drums.on, countIn: true }}
           onChoose={(c) => changeFingerStyle(c.style)}
           onClose={() => setVideoOpen(false)}
           build={(c: VideoChoices): VideoJob => ({
             title: score.title, instrumentName: INSTRUMENTS[target].name, bpm, xml: derived.mineXml, tl: derived.tl!, myIdx, instrument: target,
-            view: c.view, orientation: c.orientation, style: c.style,
+            view: c.view, orientation: c.orientation, style: c.style, countIn: c.countIn,
             audio: {
               tl: derived.tl!, bpm,
               partInstruments: parts.map((p, i) => (i === myIdx ? target : p.instrument)),
