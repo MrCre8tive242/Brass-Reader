@@ -22,7 +22,21 @@ const CHARTS: Record<InstrumentId, Chart> = {
   mellophone: TRUMPET_LIKE,
   baritone: { kind: 'valves', partials: BB_PARTIALS, low: 40, high: 70, written: false }, // non-compensating 3-valve
   trombone: { kind: 'slide', partials: BB_PARTIALS, low: 40, high: 70, written: false },
-  sousaphone: { kind: 'valves', partials: [34, 41, 46, 50, 53], low: 28, high: 53, written: false }, // 3-valve BBb
+  // 3-valve BBb: open harmonics Bb1 F2 Bb2 D3 F3 Bb3 D4 F4 (Bb3 = 8th harmonic, so F#3 to Bb3 and up to F4 are covered)
+  sousaphone: { kind: 'valves', partials: [34, 41, 46, 50, 53, 58, 62, 65], low: 28, high: 65, written: false },
+};
+
+/**
+ * ALTERNATE FINGERINGS (valves). The usual fingering is the nearest open harmonic above the note. Only the
+ * alternates a teacher actually shows are listed; the mechanical "any other harmonic within a tritone" ones
+ * (G4 1-3, B4 1-3, D5 1-3, E5 1-2, C5 2-3, F#4 1-2-3, Eb5 2-3 ...) are out of tune or unused and are NOT offered.
+ *  - 3 for 1-2 wherever 1-2 is the usual fingering (A3, E4, A4, C#5, A5 on trumpet; the same notes on the 3-valve bass instruments).
+ *  - G5 (written) on trumpet and mellophone: open or 1-3.
+ * Trombone slide positions are real alternates (F in 6th, Bb in 5th, D in 4th ...) and are all kept.
+ */
+const EXTRA_ALTERNATES: Partial<Record<InstrumentId, Record<number, string[]>>> = {
+  trumpet: { 79: ['1-3'] },
+  mellophone: { 79: ['1-3'] },
 };
 
 const label = (kind: Chart['kind'], drop: number) => (kind === 'slide' ? String(drop + 1) : VALVES[drop]);
@@ -41,9 +55,13 @@ export function fingeringFor(inst: InstrumentId, soundingMidi: number): Fingerin
   ways.sort((a, b) => a - b);
   const primary = label(c.kind, ways[0]);
   const alternates: string[] = [];
-  for (const d of ways.slice(1)) alternates.push(label(c.kind, d));
-  // the third valve alone is the usual substitute for 1-2 (both lower the pitch three semitones)
-  if (c.kind === 'valves' && primary === '1-2') alternates.unshift('3');
+  if (c.kind === 'slide') {
+    for (const d of ways.slice(1)) alternates.push(label(c.kind, d));
+  } else {
+    // the third valve alone is the usual substitute for 1-2 (both lower the pitch three semitones)
+    if (primary === '1-2') alternates.push('3');
+    alternates.push(...(EXTRA_ALTERNATES[inst]?.[pitch] ?? []));
+  }
   return { kind: c.kind, primary, alternates: [...new Set(alternates)].slice(0, 3) };
 }
 

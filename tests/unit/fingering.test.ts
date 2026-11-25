@@ -20,6 +20,13 @@ describe('trumpet valve chart (written pitch)', () => {
     expect(written('trumpet', 69)?.alternates[0]).toBe('3');
     expect(written('trumpet', 60)?.alternates ?? []).not.toContain('3');
   });
+  it('offers only the alternates a teacher shows (3 for 1-2, G5 1-3), not every harmonic within a tritone', () => {
+    const noAlt = [60, 62, 63, 65, 66, 67, 70, 71, 72, 74, 75, 76, 77, 78, 80, 82, 84];
+    for (const w of noAlt) expect(written('trumpet', w)?.alternates, `written ${w}`).toEqual([]);
+    for (const w of [57, 64, 69, 73, 81]) expect(written('trumpet', w)?.alternates, `written ${w}`).toEqual(['3']);
+    expect(written('trumpet', 79)).toMatchObject({ primary: '0', alternates: ['1-3'] });
+    expect(written('mellophone', 79)?.alternates).toEqual(['1-3']);
+  });
   it('is looked up by WRITTEN pitch: a concert Bb3 is a written C4, open', () => {
     expect(fingeringFor('trumpet', 58)).toMatchObject({ primary: '0', kind: 'valves' });
     expect(fingeringFor('trumpet', 60)?.primary).toBe('1-3'); // concert C4 is written D4
@@ -56,13 +63,15 @@ describe('bass clef instruments are looked up by concert pitch', () => {
     expect(fingeringFor('baritone', 39)).toBeNull();
     expect(fingeringFor('baritone', 71)).toBeNull();
   });
-  it('sousaphone BBb: low E to F3', () => {
+  it('sousaphone BBb: low E to F4, including F#3 to Bb3', () => {
+    const top: [number, string][] = [[54, '2-3'], [55, '1-2'], [56, '1'], [57, '2'], [58, '0'], [59, '1-2'], [60, '1'], [61, '2'], [62, '0'], [63, '1'], [64, '2'], [65, '0']];
+    for (const [m, f] of top) expect(fingeringFor('sousaphone', m)?.primary, `midi ${m}`).toBe(f);
     expect(fingeringFor('sousaphone', 34)?.primary).toBe('0'); // Bb1
     expect(fingeringFor('sousaphone', 28)?.primary).toBe('1-2-3'); // E1
     expect(fingeringFor('sousaphone', 46)?.primary).toBe('0'); // Bb2
     expect(fingeringFor('sousaphone', 53)?.primary).toBe('0'); // F3
     expect(fingeringFor('sousaphone', 27)).toBeNull();
-    expect(fingeringFor('sousaphone', 54)).toBeNull();
+    expect(fingeringFor('sousaphone', 66)).toBeNull();
   });
   it('every note of every chart has a fingering and none is invented', () => {
     for (const id of ['trumpet', 'mellophone', 'baritone', 'trombone', 'sousaphone'] as InstrumentId[]) {
@@ -89,7 +98,7 @@ describe('range warnings', () => {
     expect(outOfRange(ev, 'trombone')).toHaveLength(1);
     expect(outOfRange([{ midi: 45, measure: 1 }], 'trombone')).toHaveLength(0);
     expect(outOfRange(ev, 'sousaphone')).toHaveLength(0);
-    expect(outOfRange([{ midi: 60, measure: 1 }], 'sousaphone')[0].dir).toBe('high');
+    expect(outOfRange([{ midi: 66, measure: 1 }], 'sousaphone')[0].dir).toBe('high');
   });
   it('describes what is wrong in words', () => {
     expect(describeRange([])).toBe('');
@@ -133,6 +142,6 @@ describe('saved octave moves', () => {
   it('names the range', () => {
     expect(noteName(54)).toBe('F#3'.replace('F#', 'F#'));
     expect(rangeLabel('trumpet')).toBe('F#3 to C6');
-    expect(rangeLabel('sousaphone')).toBe('E1 to F3');
+    expect(rangeLabel('sousaphone')).toBe('E1 to F4');
   });
 });

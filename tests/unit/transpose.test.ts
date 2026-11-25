@@ -113,9 +113,9 @@ describe('fromConcert', () => {
   });
   it('sousaphone drops into its low range', () => {
     const concert = toConcert(fx('scale.musicxml'), 'trumpet');
-    expect(autoOctave(concert, 'sousaphone')).toBe(-2);
+    expect(autoOctave(concert, 'sousaphone')).toBe(-1); // the range now reaches F4, so one octave down is enough
     const ms = midis(fromConcert(concert, 'sousaphone')).filter((m): m is number => m !== null);
-    expect(Math.max(...ms)).toBeLessThanOrEqual(53);
+    expect(Math.max(...ms)).toBeLessThanOrEqual(65);
     expect(Math.min(...ms)).toBeGreaterThanOrEqual(28);
   });
   it('round trip trumpet -> concert -> trumpet gives identical pitches and keys', () => {

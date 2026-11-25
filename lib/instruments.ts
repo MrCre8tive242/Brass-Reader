@@ -19,7 +19,7 @@ export interface Instrument {
   writtenRange: [number, number];
 }
 
-// MIDI numbers: F#3=54, C6=84, E2=40, Bb4=70, E1=28, F3=53
+// MIDI numbers: F#3=54, C6=84, E2=40, Bb4=70, E1=28, F3=53, F4=65
 export const INSTRUMENTS: Record<InstrumentId, Instrument> = {
   trumpet: {
     id: 'trumpet', name: 'Bb Trumpet', clef: 'treble',
@@ -44,7 +44,7 @@ export const INSTRUMENTS: Record<InstrumentId, Instrument> = {
   sousaphone: {
     id: 'sousaphone', name: 'Sousaphone', clef: 'bass',
     writtenToConcert: 0, diatonic: 0, fifths: 0,
-    program: 58, sample: 'tuba', writtenRange: [28, 53],
+    program: 58, sample: 'tuba', writtenRange: [28, 65],
   },
 };
 

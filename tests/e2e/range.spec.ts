@@ -32,7 +32,7 @@ test('E. a different instrument has a different range', async ({ page }) => {
   await page.getByRole('button', { name: 'Close practice tools' }).click();
   await page.getByLabel('Play as').selectOption('sousaphone');
   await openPractice(page, 'range');
-  await expect(summary(page)).toContainText('E1 to F3');
+  await expect(summary(page)).toContainText('E1 to F4');
 });
 
 test('E. drop a looped passage an octave, step by step, undo it, and it is remembered', async ({ page }) => {

@@ -70,7 +70,7 @@ describe('buildTimeline', () => {
   it('sounding pitch follows an octave-shifted instrument part', () => {
     const concert = toConcert(fx('scale.musicxml'), 'trumpet');
     const sousa = buildTimeline(fromConcert(concert, 'sousaphone'));
-    expect(sousa.events[0].midi).toBe(58 - 24);
+    expect(sousa.events[0].midi).toBe(58 - 12);
     expect(sousa.events.length).toBe(16);
   });
 
