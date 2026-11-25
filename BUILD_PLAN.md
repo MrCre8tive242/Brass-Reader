@@ -1,10 +1,10 @@
 # Brass Reader — BUILD_PLAN
 
 ## STATUS
-Phase: BUILD
-Next model: Sonnet (build agents) → test agents → fixer → Fable (high) refine
-Last updated by: Sonnet (build agent)
-Current step: DONE (steps 1-4, 6-8; step 5 owned by another agent)
+Phase: REFINE
+Next model: Fable (high) refine (build, QA and fix pass are done)
+Last updated by: fixer agent
+Current step: Fix pass DONE (see "Fix pass" below); step 5 (audiveris-server) still owned by another agent
 
 ## Goal
 Mobile-first web app for a brass player (Junkanoo-style brass/drum group). Upload a photo or PDF of sheet music → app reads it into MusicXML → shows the score with a moving playback cursor + highlighted current bar → play/pause/prev bar/next bar/tap-bar-to-seek → set BPM → switch instrument (trumpet, mellophone, baritone, trombone, sousaphone), which changes BOTH the sound and the written part (transposition + clef) → download MIDI and MusicXML. Scans saved locally so you don't pay to rescan.
@@ -126,6 +126,38 @@ NOT TESTED:
 
 Files most needing review: lib/transpose.ts (spelling/key wrap edge cases), lib/player.ts (scheduling, count-in, restart on BPM change), components/ScoreView.tsx (OSMD cursor stepping, measure boxes, auto-scroll heuristics), app/api/omr/route.ts + lib/omrPrompt.ts (never run live), lib/omrClient.ts (pdfjs worker via `new URL(..., import.meta.url)` works in dev; production build compiles but only dev was exercised in e2e).
 Known UI issue: transport takes 3 rows at 375px (Count-in checkbox wraps); consider compacting.
+
+## Fix pass
+Source: tests/QA_FUNCTIONAL.md and tests/QA_UX_MUSIC.md. One commit per item ("Brass Reader fix: ...").
+Tests after the pass: 121 vitest unit tests, 29 Playwright e2e tests, `npm run build` passes.
+
+Fixed
+1. Repeats/endings: `lib/timeline.ts` `unrollMeasures()` unrolls forward/backward repeats (incl. `times`), voltas (`<ending>`), D.C./D.S. al Fine/Coda via `<sound dacapo|dalsegno|fine|tocoda|coda|segno>`. Timeline events keep `measure` = WRITTEN bar and `timeQ` = play-order time. Audio, cursor, click track, count-in and MIDI follow the unrolled order. Prev/Next bar step through played bars (`Player.stepBar`), tap-to-seek and `seek(m)` go to the FIRST pass (`firstQ`). ScoreView collects OSMD cursor steps per written bar/offset and positions by (measure, offset), so the cursor jumps back at a repeat.
+2. Bar highlight: box y/height now come from the staff (all staves of the system plus ledger-line room), x/width from the bar; stronger fill + outline in dark and light. OSMD multi-bar-rest merging is switched off so every written bar stays drawn.
+3. Held notes: restarts (BPM change, instrument swap while playing) re-attack notes sounding at the current position with their remaining length, without the 60 ms lead (no drift on rapid changes). Instrument switch with identical bar layout keeps the exact position.
+4. BPM field: free typing with a draft string, clamp 30-240 on blur/Enter; persistence bug fixed (only user changes write localStorage).
+5. Large PDFs/photos: `fitToBudget()` re-encodes through a quality/size ladder until under the request budget; "Try free reader" is only offered for genuine reader failures and only if `GET /api/omr` says Audiveris is configured. Empty-xml parse errors no longer leak xmldom wrapper text.
+6. /api/omr: optional `APP_PASSCODE` (header `X-App-Passcode`, UI asks once, localStorage, clear wrong-passcode error), per-IP in-memory rate limit (default 10/10 min, `OMR_RATE_LIMIT`, `OMR_RATE_WINDOW_MIN`) with 429 + Retry-After, `max_tokens` 16000 (`OMR_MAX_TOKENS`), `stop_reason: max_tokens` -> 422 `too_long` (falls back to Audiveris if configured), SDK/Audiveris error text logged server-side and replaced by generic messages, 400 JSON for null/array/unknown engine, 415 for non-JSON content type, bounded streaming body read (header AND real size), consistent `too_large` code, system prompt cached. Documented in README.
+7. "Written for": `detectSourceInstrument()` (transpose element, else clef: F/C -> trombone concert, G -> trumpet). Uploader default is "Detect from the music"; the player shows what was detected and why; user override persists.
+8. Validation: `lib/repair.ts` `analyseAndRepair()` checks each bar against the time signature (first bar, last bar and implicit bars may be short). Empty bars and short single-voice bars are padded with rests; long/multi-voice bars are only flagged. Server: retry prompt names the failing bars and the cleaner reading wins; warnings go in the response. UI: "Check these bars against your sheet: Bar 7 may be misread (...)".
+9. UX: 2-row transport at 375 (and 360/320) with Play centred and largest; landscape phone: slim one-row transport, compact header/pickers; zoom A-/A+ (persisted `brass-reader:zoom`); re-scroll to cursor after rotate/zoom; autoscroll uses the measured header/transport heights; focus rings on upload buttons; Space ignored on any input/select/textarea; light accent `#b05200` (5.2:1 with white); 48px targets (reorder buttons, checkboxes' labels, tap, zoom); `viewport-fit=cover` + safe-area padding; light/dark themeColor; `app/icon.svg` favicon; picker selects no longer overflow at 375.
+10. OMR prompt rewritten: WRITTEN pitches exactly as printed, `<alter>` = effective alteration as written, clef/key/time exactly as printed (clef-octave-change, common/cut time), repeats/endings/D.S./coda encoded (not skipped), photo handling, ties vs slurs, grace notes, tuplets, pickup `implicit`, `<rest measure="yes"/>`, bar-sum self-check. The example in the prompt is unit-tested as valid.
+11. P2s: empty-bar desync (padding repair), pickup labelled "Pickup" then printed bar numbers (`Timeline.barLabels`), bass-clef brass auto-octave targets median D3, key-signature wrap re-spells notes in the new key (concert F#/C# major -> trumpet Ab/Eb), unfriendly E#/B#/Fb/Cb outside the key are re-spelled.
+
+Interface changes (all additive)
+- `Timeline` gained `order` (play order, written bar per played bar), `measureCount`, `barLabels`, `barTotal`, `hasRepeats`. `measureStartsQ` is now per PLAYED bar (identical to before when there are no repeats). New helpers `slotAt`, `firstQ`, `unrollMeasures`, `readFlow`. `measureAt(tl, q)` returns the written bar.
+- `Player`: `onPosition(q, measure, offsetQ)` (extra arg), `stepBar(delta)`, `measureCount` = written bars. `ScoreViewHandle.setPosition(q, measure, offsetQ?)`, `ScoreView` prop `zoom`.
+- `Transport` props `barLabel`, `barTotal` (optional). `SavedScore.sourceAuto?`.
+- `GET /api/omr` -> `{ claude, audiveris, passcode }`. New error codes: `unauthorized` 401, `rate_limited` 429, `too_long` 422.
+- New files: `lib/omrGuard.ts`, `lib/repair.ts`, `app/icon.svg`; fixtures `tests/fixtures/qa-*.musicxml`, `bass-part.musicxml`.
+
+Not fixed / left for refine
+- Live Claude OMR is still untested (no key); the new prompt and the 16000-token ceiling are unvalidated against real scans. Output-format redesign (line-per-measure notation), EXIF/crop/contrast preprocessing and per-system crops are not done. Source-instrument/clef hints are not sent to the model (would extend the API body).
+- Rate limit is per server instance (serverless caveat, see README); no global budget cap.
+- Multi-part scores still play through one instrument (no part picker); trombone/baritone remain identical; D.C./D.S. only via `<sound>` attributes (no text-only "D.S." words); `Fine`/`tocoda` are treated as end-of-bar.
+- Review step after OMR (show detected key/time/clef and let the user correct), press-and-hold BPM repeat, "bars per line" option, .mxl size cap, CSP headers, `window.confirm` delete, `role="img"` for the score SVG: not done.
+- Prev/Next bar on a repeated bar follows the play order (so "next" after the first ending goes back to bar 1): intended, but worth a look in refine.
+- Enharmonic key choice for E major -> F# vs Gb (QA M3) not changed; downloaded MusicXML after auto-octave still has the octave baked in (QA M4).
 
 ## Refinement Log
 (refiner writes here)
