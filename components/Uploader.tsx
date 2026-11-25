@@ -2,9 +2,9 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { callOmr, prepareFiles, getPasscode, setPasscode, OmrError } from '@/lib/omrClient';
-import { extractTitle } from '@/lib/musicxml';
+import { extractTitle, detectSourceInstrument } from '@/lib/musicxml';
 import { newId, saveScore } from '@/lib/library';
-import { INSTRUMENT_IDS, INSTRUMENTS, DEFAULT_SOURCE_INSTRUMENT, type InstrumentId } from '@/lib/instruments';
+import { INSTRUMENT_IDS, INSTRUMENTS, type InstrumentId } from '@/lib/instruments';
 
 interface Item { key: string; file: File; url: string | null }
 
@@ -20,7 +20,7 @@ function titleFromName(name: string) {
 export default function Uploader() {
   const router = useRouter();
   const [items, setItems] = useState<Item[]>([]);
-  const [source, setSource] = useState<InstrumentId>(DEFAULT_SOURCE_INSTRUMENT);
+  const [source, setSource] = useState<InstrumentId | 'auto'>('auto');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<{ message: string; code: string } | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -40,7 +40,8 @@ export default function Uploader() {
     const t = extractTitle(xml);
     const title = t === 'Untitled score' ? fallbackTitle : t;
     const id = newId();
-    await saveScore({ id, title, sourceXml: xml, sourceInstrument: source, createdAt: Date.now(), origin });
+    const sourceInstrument = source === 'auto' ? detectSourceInstrument(xml).id : source;
+    await saveScore({ id, title, sourceXml: xml, sourceInstrument, sourceAuto: source === 'auto', createdAt: Date.now(), origin });
     router.push(`/score/${id}`);
   }
 
@@ -142,7 +143,8 @@ export default function Uploader() {
           </div>
           <label className="picker-one">
             <span className="muted small">This music is written for</span>
-            <select value={source} onChange={(e) => setSource(e.target.value as InstrumentId)} aria-label="Scan is written for" className="sel">
+            <select value={source} onChange={(e) => setSource(e.target.value as InstrumentId | 'auto')} aria-label="Scan is written for" className="sel">
+              <option value="auto">Detect from the music (bass clef = trombone, treble = trumpet)</option>
               {INSTRUMENT_IDS.map((id) => <option key={id} value={id}>{INSTRUMENTS[id].name}</option>)}
             </select>
           </label>

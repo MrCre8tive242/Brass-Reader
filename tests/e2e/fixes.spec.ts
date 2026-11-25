@@ -122,3 +122,22 @@ test('BPM field takes free typing, clamps on blur/Enter, and persists across rel
   await page.reload();
   await expect(page.getByLabel('BPM')).toHaveValue('133'); // survives a second reload too
 });
+
+test('"Written for" is detected from the clef on upload and can be overridden', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('xml-input').setInputFiles(`${__dirname}/../fixtures/bass-part.musicxml`);
+  await page.waitForURL(/\/score\//);
+  await expect(page.getByTestId('score')).toHaveAttribute('data-busy', '0', { timeout: 30_000 });
+  await expect(page.getByLabel('Written for')).toHaveValue('trombone');
+  await expect(page.getByTestId('source-hint')).toContainText('bass clef');
+  await expect(page.getByLabel('Play as')).toHaveValue('trombone');
+  await page.getByLabel('Written for').selectOption('trumpet');
+  await expect(page.getByTestId('source-hint')).toContainText('looks like Trombone');
+  await page.reload();
+  await expect(page.getByLabel('Written for')).toHaveValue('trumpet'); // override persists
+
+  await page.goto('/');
+  await page.getByTestId('xml-input').setInputFiles(`${__dirname}/../fixtures/scale.musicxml`);
+  await page.waitForURL(/\/score\//);
+  await expect(page.getByLabel('Written for')).toHaveValue('trumpet');
+});

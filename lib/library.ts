@@ -9,6 +9,8 @@ export interface SavedScore {
   createdAt: number;
   /** Optional: where the score came from, for the library list. */
   origin?: 'scan' | 'musicxml';
+  /** True if `sourceInstrument` was auto-detected from the music (not picked by the user). */
+  sourceAuto?: boolean;
 }
 
 const PREFIX = 'score:';

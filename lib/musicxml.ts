@@ -167,3 +167,34 @@ export async function readMusicXmlFile(bytes: Uint8Array, filename: string): Pro
   if (!v.ok) throw new MusicXmlError(v.error ?? 'Invalid MusicXML');
   return xml;
 }
+
+export interface DetectedSource { id: 'trumpet' | 'mellophone' | 'trombone'; reason: string }
+
+/**
+ * Guess which instrument a part is written for: a <transpose> element wins (Bb = -2 -> trumpet,
+ * F = -7 -> mellophone), otherwise the clef: bass (or tenor/alto) -> trombone (concert pitch), treble -> trumpet.
+ */
+export function detectSourceInstrument(xml: string): DetectedSource {
+  try {
+    const doc = parseXml(xml);
+    const part = partsOf(doc)[0];
+    if (part) {
+      for (const att of Array.from(part.getElementsByTagName('attributes')) as XEl[]) {
+        const t = kid(att, 'transpose');
+        if (t) {
+          const c = (kidNum(t, 'chromatic') ?? 0) + 12 * (kidNum(t, 'octave-change') ?? 0);
+          if (c === -2) return { id: 'trumpet', reason: 'Bb transposition marked in the file' };
+          if (c === -7) return { id: 'mellophone', reason: 'F transposition marked in the file' };
+        }
+        const clef = kid(att, 'clef');
+        if (clef) {
+          const sign = kidText(clef, 'sign');
+          if (sign === 'F') return { id: 'trombone', reason: 'bass clef, concert pitch' };
+          if (sign === 'C') return { id: 'trombone', reason: 'tenor/alto clef, concert pitch' };
+          if (sign === 'G') return { id: 'trumpet', reason: 'treble clef' };
+        }
+      }
+    }
+  } catch { /* fall through */ }
+  return { id: 'trumpet', reason: 'no clef found, assuming treble' };
+}

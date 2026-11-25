@@ -189,3 +189,24 @@ describe('musicxml helpers', () => {
     expect(validateMusicXml(xml).ok).toBe(true);
   });
 });
+
+import { detectSourceInstrument } from '@/lib/musicxml';
+import fsx from 'node:fs';
+import pathx from 'node:path';
+
+describe('detectSourceInstrument', () => {
+  const f = (n: string) => fsx.readFileSync(pathx.join(__dirname, '../fixtures', n), 'utf8');
+  it('bass clef -> trombone (concert), treble -> trumpet', () => {
+    expect(detectSourceInstrument(f('bass-part.musicxml')).id).toBe('trombone');
+    expect(detectSourceInstrument(f('scale.musicxml')).id).toBe('trumpet');
+  });
+  it('a <transpose> element wins over the clef', () => {
+    const xml = f('scale.musicxml');
+    const tr = (c: number) => xml.replace('</attributes>', `<transpose><diatonic>0</diatonic><chromatic>${c}</chromatic></transpose></attributes>`);
+    expect(detectSourceInstrument(tr(-2)).id).toBe('trumpet');
+    expect(detectSourceInstrument(tr(-7)).id).toBe('mellophone');
+  });
+  it('survives rubbish', () => {
+    expect(detectSourceInstrument('nope').id).toBe('trumpet');
+  });
+});

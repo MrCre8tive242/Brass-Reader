@@ -6,10 +6,13 @@ interface Props {
   target: InstrumentId;
   onSource: (id: InstrumentId) => void;
   onTarget: (id: InstrumentId) => void;
+  /** Small note under the pickers, e.g. what the source instrument was detected from. */
+  hint?: string;
 }
 
-export default function InstrumentPicker({ source, target, onSource, onTarget }: Props) {
+export default function InstrumentPicker({ source, target, onSource, onTarget, hint }: Props) {
   return (
+    <>
     <div className="picker">
       <label>
         <span>Written for</span>
@@ -24,5 +27,7 @@ export default function InstrumentPicker({ source, target, onSource, onTarget }:
         </select>
       </label>
     </div>
+    {hint && <p className="muted small picker-hint" data-testid="source-hint">{hint}</p>}
+    </>
   );
 }

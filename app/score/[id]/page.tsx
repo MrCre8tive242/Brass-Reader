@@ -11,6 +11,7 @@ import { INSTRUMENTS, isInstrumentId, type InstrumentId } from '@/lib/instrument
 import { toConcert, fromConcert } from '@/lib/transpose';
 import { buildTimeline } from '@/lib/timeline';
 import { toMidi } from '@/lib/midi';
+import { detectSourceInstrument } from '@/lib/musicxml';
 import { Player } from '@/lib/player';
 
 function lsGet(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
@@ -120,8 +121,15 @@ export default function ScorePage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [playPause, goBar]);
 
-  const onSource = (s: InstrumentId) => { setSource(s); void updateScore(id, { sourceInstrument: s }); };
+  const onSource = (s: InstrumentId) => { setSource(s); void updateScore(id, { sourceInstrument: s, sourceAuto: false }); };
   const onTarget = (t: InstrumentId) => { setTarget(t); lsSet(`target:${id}`, t); };
+
+  const sourceHint = score ? (() => {
+    const d = detectSourceInstrument(score.sourceXml);
+    return d.id === source
+      ? `Written for ${INSTRUMENTS[source].name}: detected from the music (${d.reason}). Change it if this part is for another instrument.`
+      : `The music looks like ${INSTRUMENTS[d.id].name} (${d.reason}), but you chose ${INSTRUMENTS[source].name}.`;
+  })() : undefined;
 
   if (score === undefined) return <main className="page"><p className="muted">Loading…</p></main>;
   if (score === null) {
@@ -135,7 +143,7 @@ export default function ScorePage() {
         <h1 className="title">{score.title}</h1>
       </header>
       <main className="page">
-        <InstrumentPicker source={source} target={target} onSource={onSource} onTarget={onTarget} />
+        <InstrumentPicker source={source} target={target} onSource={onSource} onTarget={onTarget} hint={sourceHint} />
         <p className="muted small" data-testid="engine-status">
           {engine === 'loading' ? 'Loading sounds…' : engine === 'soundfont' ? `Sound: ${INSTRUMENTS[target].name} samples` : 'Sound: simple synth (samples unavailable offline)'}
         </p>
