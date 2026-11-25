@@ -285,3 +285,10 @@ test('upload buttons show a focus ring; page-reorder targets are 48px; favicon e
   expect(await page.locator('link[rel~="icon"]').count()).toBeGreaterThan(0);
   expect(favicon.every((s) => s < 400)).toBe(true);
 });
+
+test('a pickup bar is labelled "Pickup", then Bar 1 (printed numbers)', async ({ page }) => {
+  await openScore(page, 'qa-pickup.musicxml', 'pick1');
+  await expect(bar(page)).toHaveText('Pickup');
+  await page.getByRole('button', { name: 'Next bar' }).click();
+  await expect(bar(page)).toHaveText(/^Bar 1 \/ \d+$/);
+});

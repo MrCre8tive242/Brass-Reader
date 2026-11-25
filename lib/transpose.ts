@@ -79,7 +79,15 @@ function wrapFifths(f: number): number {
 }
 
 /** Transpose one <pitch> element in place. `keyFifths` is the (already transposed) current key. */
-function transposePitch(doc: XDoc, pitch: XEl, iv: Interval, keyFifths: number): void {
+function keyAlter(step: string, fifths: number): number {
+  const order = ['F', 'C', 'G', 'D', 'A', 'E', 'B'];
+  const i = order.indexOf(step);
+  if (fifths > 0) return i < fifths ? 1 : 0;
+  if (fifths < 0) return 6 - i < -fifths ? -1 : 0;
+  return 0;
+}
+
+function transposePitch(doc: XDoc, pitch: XEl, iv: Interval, keyFifths: number, respellAll = false): void {
   const step = kidText(pitch, 'step');
   const oct = kidNum(pitch, 'octave');
   if (!step || !(step in STEP_SEMI) || oct === null) return;
@@ -91,7 +99,10 @@ function transposePitch(doc: XDoc, pitch: XEl, iv: Interval, keyFifths: number):
   const newStep = STEPS[newStepIdx];
   let alter = newMidi - ((newOct + 1) * 12 + STEP_SEMI[newStep]);
   let out = { step: newStep, alter, octave: newOct };
-  if (Math.abs(alter) > 1) out = spellInKey(newMidi, keyFifths);
+  // re-spell when: the key signature was wrapped to its enharmonic (so notes and key agree), double accidentals,
+  // or an unfriendly E#/B#/Fb/Cb that the key signature does not itself contain (-> F, C, E, B)
+  const odd = (['E', 'B'].includes(newStep) && alter === 1) || (['F', 'C'].includes(newStep) && alter === -1);
+  if (respellAll || Math.abs(alter) > 1 || (odd && keyAlter(newStep, keyFifths) !== alter)) out = spellInKey(newMidi, keyFifths);
   alter = out.alter;
   setKidText(doc, pitch, 'step', out.step);
   removeKids(pitch, 'alter');
@@ -99,12 +110,13 @@ function transposePitch(doc: XDoc, pitch: XEl, iv: Interval, keyFifths: number):
   setKidText(doc, pitch, 'octave', out.octave);
 }
 
-function transposeKey(keyEl: XEl, iv: Interval): number | null {
+function transposeKey(keyEl: XEl, iv: Interval): { fifths: number; wrapped: boolean } | null {
   const f = kidNum(keyEl, 'fifths');
   if (f === null) return null;
-  const nf = wrapFifths(f + intervalFifths(iv));
+  const raw = f + intervalFifths(iv);
+  const nf = wrapFifths(raw);
   kid(keyEl, 'fifths')!.textContent = String(nf);
-  return nf;
+  return { fifths: nf, wrapped: nf !== raw };
 }
 
 interface RunOpts {
@@ -118,6 +130,7 @@ function transposeDoc(doc: XDoc, opts: RunOpts): void {
   for (const part of partsOf(doc)) {
     let iv = opts.defaultInterval;
     let fifths = 0;
+    let wrapped = false; // key signature was rewritten to its enharmonic: spell every note in the new key
     for (const measure of kids(part, 'measure')) {
       for (const el of kids(measure)) {
         if (el.nodeName === 'attributes') {
@@ -126,13 +139,13 @@ function transposeDoc(doc: XDoc, opts: RunOpts): void {
             if (t) { iv = readTransposeEl(t); el.removeChild(t); }
           }
           for (const k of kids(el, 'key')) {
-            const nf = transposeKey(k, iv);
-            if (nf !== null) fifths = nf;
+            const r = transposeKey(k, iv);
+            if (r) { fifths = r.fifths; wrapped = r.wrapped; }
           }
         } else if (el.nodeName === 'note') {
           const p = kid(el, 'pitch');
           if (p) {
-            transposePitch(doc, p, iv, fifths);
+            transposePitch(doc, p, iv, fifths, wrapped);
             removeKids(el, 'accidental'); // renderer recomputes accidentals against the new key
           }
         }
@@ -169,22 +182,31 @@ function concertMidis(doc: XDoc): number[] {
   return out;
 }
 
+/** Median concert pitch bass-clef brass should sit around: D3 is the middle line of the bass staff. */
+const BASS_CLEF_TARGET_MEDIAN = 50;
+
 function chooseOctave(midis: number[], to: InstrumentId): number {
   if (midis.length === 0) return 0;
   const [lo, hi] = concertRange(to);
   const sorted = [...midis].sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)];
   const center = (lo + hi) / 2;
+  const bassBrass = INSTRUMENTS[to].clef === 'bass' && to !== 'sousaphone';
   let best = 0;
-  let bestScore: [number, number, number] | null = null;
+  let bestScore: number[] | null = null;
   for (let k = -2; k <= 2; k++) {
     let count = 0;
     for (const m of midis) { const s = m + 12 * k; if (s >= lo && s <= hi) count++; }
-    // maximise notes in range, then prefer the smallest shift, then closeness of median to range centre
-    const score: [number, number, number] = [-count, Math.abs(k), Math.abs(median + 12 * k - center)];
-    if (!bestScore || score[0] < bestScore[0] || (score[0] === bestScore[0] && (score[1] < bestScore[1] || (score[1] === bestScore[1] && score[2] < bestScore[2])))) {
-      bestScore = score; best = k;
-    }
+    const shifted = median + 12 * k;
+    // 1. maximise notes in range
+    // 2. bass-clef brass: keep the median near D3 so the part stays on the staff, not on ledger lines
+    //    (others: smallest shift first), then closeness to the centre of the range
+    const score = bassBrass
+      ? [-count, Math.abs(shifted - BASS_CLEF_TARGET_MEDIAN), Math.abs(k)]
+      : [-count, Math.abs(k), Math.abs(shifted - center)];
+    let better = !bestScore;
+    if (bestScore) for (let i = 0; i < score.length; i++) { if (score[i] !== bestScore[i]) { better = score[i] < bestScore[i]; break; } }
+    if (better) { bestScore = score; best = k; }
   }
   return best;
 }
