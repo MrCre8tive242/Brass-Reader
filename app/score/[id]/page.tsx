@@ -17,10 +17,11 @@ import { DEFAULT_MIX, normalizeMix, type MixState } from '@/lib/mixer';
 import BandPanel from '@/components/BandPanel';
 import PitchPanel from '@/components/PitchPanel';
 import RecordPanel from '@/components/RecordPanel';
+import { fingeringFor } from '@/lib/fingering';
 import { MicSession } from '@/lib/micSession';
 import { type NoteResult } from '@/lib/pitch';
 import { offsetInBar } from '@/lib/timeline';
-import type { NoteMark } from '@/components/ScoreView';
+import type { NoteLabel, NoteMark } from '@/components/ScoreView';
 import { AlertIcon, BackIcon } from '@/components/Icons';
 import { analyseAndRepair } from '@/lib/repair';
 import { Player } from '@/lib/player';
@@ -60,6 +61,7 @@ export default function ScorePage() {
   const [trainer, setTrainer] = useState<Trainer>(DEFAULT_TRAINER);
   const [pass, setPass] = useState<{ n: number; bpm: number } | null>(null);
   const mic = useMemo(() => new MicSession(), []);
+  const [fingerings, setFingerings] = useState(false);
   const [pitchOn, setPitchOn] = useState(false);
   const [pitchResults, setPitchResults] = useState<(NoteResult | undefined)[]>([]);
   const [checksOpen, setChecksOpen] = useState(false);
@@ -253,6 +255,19 @@ export default function ScorePage() {
     return out;
   }, [tlNow, pitchOn, pitchResults, myNotes]);
   const marks = pitchMarks;
+  // valves / slide positions under my notes (looked up by what the instrument is playing)
+  const fingerLabels = useMemo<NoteLabel[] | undefined>(() => {
+    if (!fingerings || !tlNow) return undefined;
+    const out: NoteLabel[] = [];
+    for (const e of tlNow.events) {
+      if (e.part !== undefined && e.part !== myIdx) continue;
+      const f = fingeringFor(target, e.midi);
+      out.push({ measure: e.measure, offQ: offsetInBar(tlNow, e.timeQ), text: f ? f.primary : '—', alts: f?.alternates });
+    }
+    return out;
+  }, [fingerings, tlNow, myIdx, target]);
+  useEffect(() => { setFingerings(lsGet('brass-reader:fingerings') === '1'); }, []);
+  const changeFingerings = (v: boolean) => { setFingerings(v); lsSet('brass-reader:fingerings', v ? '1' : '0'); };
   const measureCount = tlNow?.measureCount ?? 0;
   const measureCountRef = useRef(0);
   measureCountRef.current = measureCount;
@@ -425,6 +440,7 @@ export default function ScorePage() {
             zoom={zoom}
             flagged={flagged}
             marks={marks}
+            labels={fingerLabels}
             loop={normalizeLoop(loop, measureCount)}
             onLoopSelect={pickLoop}
             onSeekMeasure={(m) => player.current?.seek(m)}
@@ -445,6 +461,17 @@ export default function ScorePage() {
             parts={parts} myIdx={myIdx} mix={mix} full={full} scoreId={id} warnings={derived?.warnings ?? []}
             onMix={onMix} onMy={(i) => onPart(String(i))} onFull={onFull} onInstrument={onPartInstrument}
           />
+        </Section>
+        <Section id="fingerings" title={INSTRUMENTS[target].id === 'trombone' ? 'Slide positions' : 'Fingerings'}>
+          <label className="chk wide">
+            <input type="checkbox" checked={fingerings} onChange={(e) => changeFingerings(e.target.checked)} aria-label="Show fingerings" /> Show {target === 'trombone' ? 'slide positions' : 'fingerings'} under the notes
+          </label>
+          <p className="muted small" data-testid="finger-help">
+            {target === 'trombone'
+              ? 'Slide positions 1 to 7 (1 = in). The usual position is shown; tap one for another way to play the note.'
+              : `Valves 1, 2, 3 (0 = open). The usual fingering is shown; tap one for another way to play the note. ${target === 'trumpet' || target === 'mellophone' ? 'Looked up by the written pitch.' : 'Looked up by the concert pitch.'}`}
+            {' '}A dash means the note is outside the chart.
+          </p>
         </Section>
         <Section id="pitch" title="Pitch check (microphone)">
           <PitchPanel
