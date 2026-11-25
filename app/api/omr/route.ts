@@ -1,11 +1,17 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
-import { DEFAULT_OMR_MODEL, OMR_SYSTEM_PROMPT, userPrompt, retryPrompt } from '@/lib/omrPrompt';
-import { runOmr, validateImages, MAX_BODY_BYTES, OmrTruncated, OmrUserError, type Engine, type OmrDeps } from '@/lib/omrCore';
+import { DEFAULT_OMR_MODEL, OMR_SYSTEM_PROMPT } from '@/lib/omrPrompt';
+import { buildContent } from '@/lib/omrMessage';
+import { runOmr, validateImages, readOptions, MAX_BODY_BYTES, OmrTruncated, OmrUserError, type Engine, type OmrDeps, type OmrRequest } from '@/lib/omrCore';
 import { PASSCODE_HEADER, RateLimiter, clientIp, passcodeOk, passcodeRequired, readBodyLimited } from '@/lib/omrGuard';
 
-/** Output ceiling for one part (a 48-bar single line is well under this). Override with OMR_MAX_TOKENS (cap 32000). */
-const MAX_TOKENS = Math.min(32000, Math.max(2000, Number(process.env.OMR_MAX_TOKENS) || 16000));
+/**
+ * Output ceiling per call. It covers the model's reasoning as well as the reading itself (a page of a brass
+ * part is roughly 1-3 thousand tokens of text). Override with OMR_MAX_TOKENS (4000-64000).
+ */
+const MAX_TOKENS = Math.min(64000, Math.max(4000, Number(process.env.OMR_MAX_TOKENS) || 32000));
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+type Effort = (typeof EFFORTS)[number];
 const BODY_LIMIT = Math.round(MAX_BODY_BYTES * 1.4);
 
 // best-effort per-IP limit (in memory: per server instance). Defaults to 10 requests / 10 minutes.
@@ -16,40 +22,34 @@ export const __limiter = limiter;
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
-type ImageMedia = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
-
-function imageBlocks(images: string[]): Anthropic.ImageBlockParam[] {
-  return images.map((url) => {
-    const m = url.match(/^data:(image\/[a-z]+);base64,(.*)$/s)!;
-    const media = (m[1] === 'image/jpg' ? 'image/jpeg' : m[1]) as ImageMedia;
-    return { type: 'image', source: { type: 'base64', media_type: media, data: m[2] } };
-  });
-}
-
-async function callClaude(images: string[], retry?: { previous: string; error: string }): Promise<string> {
+async function callClaude(req: OmrRequest, followUp?: string): Promise<string> {
   const client = new Anthropic(); // reads ANTHROPIC_API_KEY
-  const messages: Anthropic.MessageParam[] = [
-    { role: 'user', content: [...imageBlocks(images), { type: 'text', text: userPrompt(images.length) }] },
-  ];
-  if (retry) {
-    messages.push({ role: 'assistant', content: retry.previous });
-    messages.push({ role: 'user', content: retryPrompt(retry.error) });
-  }
+  const effort = EFFORTS.find((e) => e === process.env.OMR_EFFORT) as Effort | undefined;
   let msg: Anthropic.Message;
   try {
     const stream = client.messages.stream({
       model: process.env.OMR_MODEL || DEFAULT_OMR_MODEL,
       max_tokens: MAX_TOKENS,
       system: [{ type: 'text', text: OMR_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
-      messages,
+      messages: [{ role: 'user', content: buildContent(req, followUp) }],
+      ...(effort ? { output_config: { effort } } : {}),
     });
     msg = await stream.finalMessage();
   } catch (e) {
-    if (e instanceof Anthropic.APIError && (e.status === 429 || e.status === 529)) {
+    if (e instanceof Anthropic.RateLimitError || (e instanceof Anthropic.APIError && e.status === 529)) {
       throw new OmrUserError('The reader is busy right now. Wait a minute and try again.');
+    }
+    if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) {
+      console.error('[omr] the API key was rejected:', e.status);
+      throw new OmrUserError('The reader is not set up correctly (the API key was rejected). Tell the person who runs this app.');
+    }
+    if (e instanceof Anthropic.APIConnectionError) {
+      throw new OmrUserError('The reader could not be reached. Check the connection and try again.');
     }
     throw e;
   }
+  const u = msg.usage;
+  console.info(`[omr] ${followUp ? 'second look' : 'reading'}: in ${u.input_tokens}, cached ${u.cache_read_input_tokens ?? 0}, out ${u.output_tokens}, stop ${msg.stop_reason}`);
   if (msg.stop_reason === 'refusal') throw new OmrUserError('The reader declined this image. Try another photo.');
   if (msg.stop_reason === 'max_tokens') throw new OmrTruncated();
   return msg.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
@@ -97,12 +97,14 @@ export async function POST(req: Request) {
     return fail(400, 'Invalid JSON body.', 'bad_request');
   }
   if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(400, 'Send a JSON object with an images array.', 'bad_request');
-  const b = body as { images?: unknown; engine?: unknown };
+  const b = body as { images?: unknown; engine?: unknown; tiles?: unknown; hints?: unknown };
   if (b.engine !== undefined && b.engine !== 'auto' && b.engine !== 'claude' && b.engine !== 'audiveris') {
     return fail(400, "Unknown engine (use 'auto', 'claude' or 'audiveris').", 'bad_request');
   }
   const bad = validateImages(b.images);
   if (bad) return fail(bad.includes('large') ? 413 : 400, bad, bad.includes('large') ? 'too_large' : 'bad_request');
+  const opts = readOptions(b, (b.images as string[]).length);
+  if (typeof opts === 'string') return fail(400, opts, 'bad_request');
   const engine: Engine = b.engine ?? 'auto';
 
   const deps: OmrDeps = {
@@ -111,7 +113,7 @@ export async function POST(req: Request) {
     callClaude,
     callAudiveris,
   };
-  const r = await runOmr(b.images as string[], engine, deps);
+  const r = await runOmr({ images: b.images as string[], tiles: opts.tiles, hints: opts.hints }, engine, deps);
   if (!r.ok) return fail(r.status, r.error, r.code);
-  return NextResponse.json({ musicxml: r.musicxml, engine: r.engine, warnings: r.warnings });
+  return NextResponse.json({ musicxml: r.musicxml, engine: r.engine, warnings: r.warnings, flags: r.flags });
 }

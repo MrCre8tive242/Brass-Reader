@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { POST, GET, __limiter } from '@/app/api/omr/route';
 import { RateLimiter, passcodeOk, clientIp, readBodyLimited } from '@/lib/omrGuard';
 
-const img = 'data:image/jpeg;base64,AAAA';
+const img = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/';
 let n = 0;
 function req(body: unknown, headers: Record<string, string> = {}, raw = false) {
   // every request gets its own client IP unless a test wants to share one
@@ -114,5 +114,53 @@ describe('guards', () => {
     expect(await readBodyLimited(r, 100)).toEqual({ ok: false });
     const r2 = new Request('http://x', { method: 'POST', body: 'hello' });
     expect(await readBodyLimited(r2, 100)).toEqual({ ok: true, text: 'hello' });
+  });
+});
+
+import { buildContent } from '@/lib/omrMessage';
+
+describe('/api/omr options', () => {
+  it('400 for bad tiles or hints, before anything is sent to a reader', async () => {
+    for (const extra of [{ tiles: [2] }, { tiles: 'x' }, { hints: { instrument: 'kazoo' } }, { hints: 'trumpet' }]) {
+      const r = await POST(req({ images: [img], ...extra }));
+      expect(r.status, JSON.stringify(extra)).toBe(400);
+      expect(await r.json()).toMatchObject({ code: 'bad_request' });
+    }
+  });
+  it('good tiles and hints pass validation (then 503 with no key)', async () => {
+    expect((await POST(req({ images: [img, img], tiles: [2], hints: { instrument: 'trombone', part: 'Trombone 1' } }))).status).toBe(503);
+  });
+  it('more than 6 whole pages is refused, 6 pages cut in two is fine', async () => {
+    expect((await POST(req({ images: Array(7).fill(img) }))).status).toBe(400);
+    expect((await POST(req({ images: Array(12).fill(img), tiles: [2, 2, 2, 2, 2, 2] }))).status).toBe(503);
+  });
+  it('a file that is not an image is refused with 400', async () => {
+    const r = await POST(req({ images: ['data:image/png;base64,' + Buffer.from('#!/bin/sh\necho hello world').toString('base64')] }));
+    expect(r.status).toBe(400);
+    expect((await r.json()).error).toMatch(/not a readable picture/);
+  });
+});
+
+describe('message content sent to the reader', () => {
+  const png = 'data:image/jpeg;base64,' + Buffer.from('\x89PNG\r\n\x1a\n0000IHDR', 'latin1').toString('base64');
+  it('labels every image, uses the real media type, and ends with the instructions', () => {
+    const c = buildContent({ images: [img, png, img], tiles: [2, 1], hints: { instrument: 'trumpet' } });
+    expect(c.map((b) => b.type)).toEqual(['text', 'image', 'text', 'image', 'text', 'image', 'text']);
+    expect(c.filter((b) => b.type === 'text').map((b) => (b as { text: string }).text.split('\n')[0])).toEqual([
+      'Page 1 of 2, top part:', 'Page 1 of 2, bottom part:', 'Page 2 of 2:',
+      'These are 2 consecutive pages of one piece. Read all of them into one transcription with continuous bar numbers.',
+    ]);
+    const imgs = c.filter((b) => b.type === 'image') as { source: { media_type: string; data: string }; cache_control?: unknown }[];
+    expect(imgs.map((i) => i.source.media_type)).toEqual(['image/jpeg', 'image/png', 'image/jpeg']);
+    expect(imgs[0].source.data).toBe(img.split(',')[1]);
+    // one cache breakpoint, on the last image
+    expect(imgs.map((i) => !!i.cache_control)).toEqual([false, false, true]);
+    expect((c[6] as { text: string }).text).toMatch(/written for Bb Trumpet/);
+  });
+  it('a second look appends its instructions after an identical prefix (so the cache is hit)', () => {
+    const a = buildContent({ images: [img] });
+    const b = buildContent({ images: [img] }, 'LOOK AGAIN');
+    expect(b.slice(0, a.length)).toEqual(a);
+    expect(b[b.length - 1]).toEqual({ type: 'text', text: 'LOOK AGAIN' });
   });
 });
