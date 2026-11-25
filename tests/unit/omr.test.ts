@@ -160,3 +160,38 @@ describe('runOmr error handling', () => {
     expect((r as { warnings: string[] }).warnings[0]).toMatch(/too long/);
   });
 });
+
+import { OMR_SYSTEM_PROMPT, userPrompt } from '@/lib/omrPrompt';
+
+describe('OMR prompt', () => {
+  it('asks for WRITTEN pitches and has no contradictory "sounding" wording', () => {
+    expect(OMR_SYSTEM_PROMPT).toMatch(/WRITTEN pitches exactly as printed/);
+    expect(OMR_SYSTEM_PROMPT).not.toMatch(/sounding/i);
+    expect(OMR_SYSTEM_PROMPT).toMatch(/effective alteration of the note AS WRITTEN/);
+  });
+  it('encodes repeats/endings instead of skipping them', () => {
+    expect(OMR_SYSTEM_PROMPT).not.toMatch(/skip repeat/i);
+    expect(OMR_SYSTEM_PROMPT).toMatch(/repeat direction="forward"/);
+    expect(OMR_SYSTEM_PROMPT).toMatch(/<ending number=/);
+    expect(OMR_SYSTEM_PROMPT).toMatch(/dalsegno/);
+    expect(OMR_SYSTEM_PROMPT).toMatch(/dacapo/);
+  });
+  it('covers the missing items from the QA review', () => {
+    for (const needle of ['clef-octave-change', 'symbol="cut"', 'symbol="common"', '<grace/>', 'NOT a tie', 'type="start|stop"', 'implicit="yes"', 'measure="yes"', 'top to bottom', 'perspective', 'exactly as printed']) {
+      expect(OMR_SYSTEM_PROMPT, needle).toContain(needle);
+    }
+  });
+  it('the example in the prompt is itself valid, bar-correct MusicXML with a repeat', async () => {
+    const ex = OMR_SYSTEM_PROMPT.slice(OMR_SYSTEM_PROMPT.lastIndexOf('<?xml'));
+    const { validateMusicXml } = await import('@/lib/musicxml');
+    const { analyseAndRepair } = await import('@/lib/repair');
+    const { buildTimeline } = await import('@/lib/timeline');
+    expect(validateMusicXml(ex).ok).toBe(true);
+    expect(analyseAndRepair(ex).issues).toEqual([]);
+    expect(buildTimeline(ex).order).toEqual([1, 2, 1, 2]);
+  });
+  it('user prompts ask for exactness and bar checks', () => {
+    expect(userPrompt(1)).toMatch(/exactly as printed/);
+    expect(userPrompt(3)).toMatch(/consecutive pages/);
+  });
+});
