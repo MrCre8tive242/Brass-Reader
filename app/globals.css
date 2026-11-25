@@ -392,3 +392,36 @@ details.warn summary strong { margin-right: 0.25em; }
 .micdot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); animation: blink 1.2s infinite; }
 .heard .concert { font-weight: 400; color: var(--muted); font-size: 0.8em; }
 @media (prefers-reduced-motion: reduce) { .hold-ring, .hold-ring i { animation-duration: 0.01s; } .micdot { animation: none; } }
+
+/* view switch and fingering style: segmented buttons */
+.viewbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 14px; margin: 8px 0 8px; }
+.seg-wrap { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.seg-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); }
+.seg button { min-height: 44px; min-width: 48px; padding: 0 12px; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--text); font: inherit; font-size: 0.92rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.seg button:last-child { border-right: 0; }
+.seg button.on { background: var(--accent); color: var(--accent-ink); }
+@media (max-width: 420px) { .seg button { padding: 0 9px; font-size: 0.86rem; } .viewbar { gap: 4px 10px; } }
+@media (orientation: landscape) and (max-height: 520px) { .viewbar { margin: 2px 0 4px; } .seg button { min-height: 40px; } .seg-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); } }
+
+/* the 2-bar view */
+.tb { --tb-ink: #2a2218; --tb-muted: #8a7a5c; padding: 6px 0; }
+.tb-stage { position: relative; cursor: pointer; width: 100%; min-height: 120px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: pan-y; }
+.tb-pane { position: absolute; left: 0; top: 0; }
+.tb-host { position: relative; }
+.tb-host svg { display: block; }
+.tb-extras, .tb-fing { position: absolute; left: 0; top: 0; pointer-events: none; }
+.tb-extras .loop-mark, .tb-extras .bar-flag { position: absolute; left: 0; top: 0; }
+.tb-fing { color: var(--tb-ink); overflow: visible; z-index: 1; }
+.tb-fing text.num { fill: currentColor; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 700; }
+.tb-fing text.lbl { fill: var(--tb-muted); font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 700; }
+.tb-fing .dot { fill: none; stroke: currentColor; }
+.tb-fing .dot.on { fill: currentColor; }
+.tb-fing .cell { fill: none; stroke: currentColor; opacity: 0.28; }
+.tb-fing .ln { stroke: currentColor; stroke-linecap: round; }
+.tb-pane .bar-hl { z-index: 0; }
+.tb-cursor { position: absolute; left: 0; top: 0; display: none; border-radius: 2px; background: #ff7a00; opacity: 0.85; box-shadow: 0 0 6px rgba(255, 122, 0, 0.6); pointer-events: none; z-index: 2; will-change: transform; }
+@media (prefers-color-scheme: dark) {
+  .tb { --tb-ink: #efe3c9; --tb-muted: #b3a384; }
+  .tb-host svg { filter: invert(1) hue-rotate(180deg); }
+}

@@ -3,6 +3,9 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ScoreView, { type ScoreViewHandle } from '@/components/ScoreView';
+import TwoBarView, { type TwoBarHandle } from '@/components/TwoBarView';
+import FingerStylePicker from '@/components/FingerStylePicker';
+import { DEFAULT_FINGER_STYLE, normalizeFingerStyle, type FingerStyle } from '@/lib/fingerStyle';
 import Transport from '@/components/Transport';
 import InstrumentPicker from '@/components/InstrumentPicker';
 import Downloads from '@/components/Downloads';
@@ -10,7 +13,7 @@ import { getScore, updateScore, type SavedScore } from '@/lib/library';
 import { onStorageProblem } from '@/lib/storage';
 import { INSTRUMENTS, isInstrumentId, type InstrumentId } from '@/lib/instruments';
 import { toConcert, fromConcert } from '@/lib/transpose';
-import { buildTimeline } from '@/lib/timeline';
+import { buildTimeline, measureAt } from '@/lib/timeline';
 import { toMidi } from '@/lib/midi';
 import { detectSourceInstrument, summariseScore } from '@/lib/musicxml';
 import { songPartsOf, fitBars, mergeScores, mergeTimelines, type SongPart } from '@/lib/song';
@@ -94,6 +97,9 @@ export default function ScorePage() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const player = useRef<Player | null>(null);
   const view = useRef<ScoreViewHandle>(null);
+  const bars = useRef<TwoBarHandle>(null);
+  const [viewMode, setViewMode] = useState<'full' | 'twobar'>('full');
+  const [fingerStyle, setFingerStyle] = useState<FingerStyle>(DEFAULT_FINGER_STYLE);
   const measureRef = useRef(1);
 
   useEffect(() => {
@@ -129,6 +135,7 @@ export default function ScorePage() {
         if (s.loop) setLoopDraft(s.loop);
         setTrainer(normalizeTrainer(s.trainer));
         setDrums(normalizeDrums(s.drums));
+        setViewMode(s.view === 'twobar' ? 'twobar' : 'full');
       }
     }).catch(() => alive && setScore(null));
     return () => { alive = false; };
@@ -166,9 +173,9 @@ export default function ScorePage() {
       const tl = others.length ? mergeTimelines(tlMine, myIdx, others.map((o) => ({ index: o.index, tl: o.tl }))) : tlMine;
       const ordered = [{ xml: mineXml, name: myPart.name }, ...others.map((o) => ({ xml: o.xml, name: o.name }))];
       const exportXml = ordered.length > 1 ? mergeScores(ordered) : mineXml;
-      return { xml: full && ordered.length > 1 ? exportXml : mineXml, exportXml, tl, err: null as string | null, warnings };
+      return { xml: full && ordered.length > 1 ? exportXml : mineXml, mineXml, exportXml, tl, err: null as string | null, warnings };
     } catch (e) {
-      return { xml: '', exportXml: '', tl: null, err: (e as Error).message, warnings: [] as string[] };
+      return { xml: '', mineXml: '', exportXml: '', tl: null, err: (e as Error).message, warnings: [] as string[] };
     }
   }, [score, repair, myPart, myIdx, parts, source, target, full, shifts]);
 
@@ -192,6 +199,7 @@ export default function ScorePage() {
     };
     p.onPosition = (q, m, off) => {
       view.current?.setPosition(q, m, off);
+      bars.current?.setPosition(q, m, off);
       if (m !== measureRef.current) { measureRef.current = m; setMeasure(m); }
     };
     player.current = p;
@@ -285,7 +293,7 @@ export default function ScorePage() {
   // opening the drawer: keep the bar being played in view above it
   useEffect(() => {
     if (!practiceOpen) return;
-    const t = setTimeout(() => view.current?.ensureVisible(), 120);
+    const t = setTimeout(() => { view.current?.ensureVisible(); bars.current?.ensureVisible(); }, 120);
     return () => clearTimeout(t);
   }, [practiceOpen]);
   const loopRef = useRef<LoopRange | null>(null);
@@ -391,10 +399,23 @@ export default function ScorePage() {
   }, [fingerings, tlNow, myIdx, target]);
   useEffect(() => { setFingerings(lsGet('brass-reader:fingerings') === '1'); }, []);
   const changeFingerings = (v: boolean) => { setFingerings(v); lsSet('brass-reader:fingerings', v ? '1' : '0'); };
+  useEffect(() => { setFingerStyle(normalizeFingerStyle(lsGet('brass-reader:finger-style'))); }, []);
+  const changeFingerStyle = useCallback((v: FingerStyle) => { setFingerStyle(v); lsSet('brass-reader:finger-style', v); }, []);
+  const changeView = useCallback((v: 'full' | 'twobar') => { setViewMode(v); void updateScore(id, { view: v }); }, [id]);
   const measureCount = tlNow?.measureCount ?? 0;
   const measureCountRef = useRef(0);
   measureCountRef.current = measureCount;
 
+  /** A view that was just drawn (first time, or after switching) is moved to where the music is. */
+  const resyncView = useCallback(() => {
+    const p = player.current;
+    const tl = derived?.tl;
+    if (!p || !tl) return;
+    const q = p.currentQ();
+    const m = measureAt(tl, q);
+    view.current?.setPosition(q, m, offsetInBar(tl, q));
+    bars.current?.setPosition(q, m, offsetInBar(tl, q));
+  }, [derived]);
   const playPause = useCallback(() => {
     const p = player.current;
     if (!p) return;
@@ -585,7 +606,26 @@ export default function ScorePage() {
             </div>
           )
           : !loopHintSeen && derived && !derived.err && <p className="muted small loophint" data-testid="loop-hint">Tip: press and hold a bar to loop it (drag with a mouse). More loop tools are in Practice.</p>}
-        {derived && !derived.err && (
+        {derived && !derived.err && viewMode === 'twobar' && derived.tl && (
+          <TwoBarView
+            ref={bars}
+            xml={derived.mineXml}
+            tl={derived.tl}
+            loopQ={loopNorm ? loopQ(derived.tl, loopNorm) : null}
+            loop={loopNorm}
+            instrument={target}
+            style={fingerStyle}
+            myIdx={myIdx}
+            flagged={flagged}
+            marks={marks}
+            getQ={() => player.current?.currentQ() ?? 0}
+            onLoopSelect={pickLoop}
+            onSeekMeasure={seekGuarded}
+            onReady={() => { setScoreReady(true); resyncView(); }}
+            onError={setError}
+          />
+        )}
+        {derived && !derived.err && viewMode === 'full' && (
           <ScoreView
             ref={view}
             xml={derived.xml}
@@ -596,9 +636,21 @@ export default function ScorePage() {
             loop={normalizeLoop(loop, measureCount)}
             onLoopSelect={pickLoop}
             onSeekMeasure={seekGuarded}
-            onReady={() => setScoreReady(true)}
+            onReady={() => { setScoreReady(true); resyncView(); }}
             onError={setError}
           />
+        )}
+        {derived && !derived.err && (
+          <div className="viewbar" data-testid="viewbar">
+            <div className="seg-wrap">
+              <span className="seg-label">View</span>
+              <div className="seg" role="radiogroup" aria-label="View" data-testid="view-toggle">
+                <button type="button" role="radio" aria-checked={viewMode === 'full'} className={viewMode === 'full' ? 'on' : ''} onClick={() => changeView('full')}>Full sheet</button>
+                <button type="button" role="radio" aria-checked={viewMode === 'twobar'} className={viewMode === 'twobar' ? 'on' : ''} onClick={() => changeView('twobar')}>2 bars</button>
+              </div>
+            </div>
+            {viewMode === 'twobar' && <FingerStylePicker value={fingerStyle} onChange={changeFingerStyle} label={fingerWord === 'Slide' ? 'Slide' : 'Fingerings'} slide={target === 'trombone'} />}
+          </div>
         )}
         <p className="disclaimer">Reading is automatic and can make mistakes. Check the notes against your sheet.</p>
         <Downloads

@@ -38,6 +38,8 @@ export interface SavedScore {
   trainer?: Trainer;
   /** Drums under this score (chosen groove, volume, feel). */
   drums?: DrumSettings;
+  /** What the score screen shows: the whole sheet (default) or only the bar being played and the next one. */
+  view?: 'full' | 'twobar';
 }
 
 const PREFIX = 'score:';
