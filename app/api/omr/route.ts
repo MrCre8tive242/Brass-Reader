@@ -16,8 +16,11 @@ const BODY_LIMIT = Math.round(MAX_BODY_BYTES * 1.4);
 
 // best-effort per-IP limit (in memory: per server instance). Defaults to 10 requests / 10 minutes.
 const limiter = new RateLimiter(Number(process.env.OMR_RATE_LIMIT) || 10, (Number(process.env.OMR_RATE_WINDOW_MIN) || 10) * 60_000);
+// ceiling for everyone together (per server instance): stops a flood from many addresses. Default 300 scans a day.
+const daily = new RateLimiter(Number(process.env.OMR_DAILY_LIMIT) || 300, 24 * 60 * 60_000);
 /** Exposed for tests. */
 export const __limiter = limiter;
+export const __daily = daily;
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -106,6 +109,13 @@ export async function POST(req: Request) {
   const opts = readOptions(b, (b.images as string[]).length);
   if (typeof opts === 'string') return fail(400, opts, 'bad_request');
   const engine: Engine = b.engine ?? 'auto';
+
+  // only requests that would really reach a reader count toward the overall ceiling
+  const all = daily.check('all');
+  if (!all.ok) {
+    return fail(429, 'The reader has been used a lot today and is resting. Try again later, or open a MusicXML file.', 'rate_limited',
+      { 'Retry-After': String(all.retryAfterS) });
+  }
 
   const deps: OmrDeps = {
     hasClaudeKey: !!process.env.ANTHROPIC_API_KEY,

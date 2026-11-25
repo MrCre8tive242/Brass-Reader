@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { POST, GET, __limiter } from '@/app/api/omr/route';
+import { POST, GET, __limiter, __daily } from '@/app/api/omr/route';
 import { RateLimiter, passcodeOk, clientIp, readBodyLimited } from '@/lib/omrGuard';
 
 const img = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/';
@@ -14,7 +14,7 @@ function req(body: unknown, headers: Record<string, string> = {}, raw = false) {
 }
 
 const saved = { ...process.env };
-beforeEach(() => { delete process.env.ANTHROPIC_API_KEY; delete process.env.AUDIVERIS_URL; delete process.env.APP_PASSCODE; __limiter.max = 10; });
+beforeEach(() => { delete process.env.ANTHROPIC_API_KEY; delete process.env.AUDIVERIS_URL; delete process.env.APP_PASSCODE; __limiter.max = 10; __daily.max = 100000; });
 afterEach(() => { process.env = { ...saved }; vi.restoreAllMocks(); });
 
 describe('/api/omr request validation', () => {
@@ -162,5 +162,18 @@ describe('message content sent to the reader', () => {
     const b = buildContent({ images: [img] }, 'LOOK AGAIN');
     expect(b.slice(0, a.length)).toEqual(a);
     expect(b[b.length - 1]).toEqual({ type: 'text', text: 'LOOK AGAIN' });
+  });
+});
+
+describe('/api/omr overall daily ceiling', () => {
+  it('429 for everyone once the ceiling is reached, but only requests with a valid passcode count', async () => {
+    process.env.APP_PASSCODE = 'swordfish';
+    __daily.max = 0; // already used up
+    // a wrong passcode is turned away as 401 and does not touch the ceiling
+    expect((await POST(req({ images: [img] }, { 'X-App-Passcode': 'nope' }))).status).toBe(401);
+    const r = await POST(req({ images: [img] }, { 'X-App-Passcode': 'swordfish' }));
+    expect(r.status).toBe(429);
+    expect((await r.json()).error).toMatch(/used a lot today/);
+    expect(Number(r.headers.get('retry-after'))).toBeGreaterThan(0);
   });
 });

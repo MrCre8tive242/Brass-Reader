@@ -280,3 +280,23 @@ describe('several parts share the time signature', () => {
     expect(summariseScore(x).parts.map((p) => p.time)).toEqual(['3/4', '3/4']);
   });
 });
+
+import JSZip from 'jszip';
+import { readMusicXmlFile, unzipMxl, MAX_XML_BYTES } from '@/lib/musicxml';
+
+describe('opening files safely', () => {
+  it('refuses an .mxl whose score unpacks to something enormous (zip bomb)', async () => {
+    const zip = new JSZip();
+    zip.file('score.xml', new Uint8Array(MAX_XML_BYTES + 1000)); // zeros: a few kB zipped
+    const data = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
+    expect(data.length).toBeLessThan(200_000);
+    await expect(unzipMxl(data)).rejects.toThrow(/too large/);
+  });
+  it('refuses a plain file that is far too large, and still opens a normal .mxl', async () => {
+    await expect(readMusicXmlFile(new Uint8Array(MAX_XML_BYTES + 1), 'big.musicxml')).rejects.toThrow(/too large/);
+    const zip = new JSZip();
+    zip.file('s.musicxml', notationToMusicXml(parseNotation('1: C4:w')).xml);
+    const xml = await readMusicXmlFile(await zip.generateAsync({ type: 'uint8array' }), 'ok.mxl');
+    expect(validateMusicXml(xml).ok).toBe(true);
+  });
+});

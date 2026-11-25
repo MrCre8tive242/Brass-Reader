@@ -33,7 +33,7 @@ Reply with plain text only: header lines, then one line per bar. No explanations
 Header, once per part, before its bars:
 title: the title printed on the page (leave the line out if there is none)
 part: the instrument name printed at the staff (leave out if none)
-clef: treble, bass, tenor, alto, or treble8vb (treble clef with a small 8 below it)
+clef: treble, bass, tenor or alto
 key: how many sharps or flats are in the key signature: 2b, 3#, or 0 for none
 time: 4/4, 3/4, 6/8, 2/2 and so on. Write C for the common-time sign and cut for the cut-time sign.
 tempo: the number, only if a metronome mark is printed

@@ -178,7 +178,7 @@ describe('OMR prompt', () => {
     expect(OMR_SYSTEM_PROMPT).not.toMatch(/sounding|concert pitch/i);
   });
   it('covers the things brass parts are full of', () => {
-    for (const needle of ['Multi-bar rest', 'pickup', '|:', ':|', '[1', 'segno', 'ds.coda', 'dc.fine', 'cut', 'treble8vb', 'tied', 'slur', 'Grace note', '/3', 'ledger line', 'top to bottom', 'tilted', 'consecutive pages', 'top part and a bottom part', NOT_MUSIC, '? 12:']) {
+    for (const needle of ['Multi-bar rest', 'pickup', '|:', ':|', '[1', 'segno', 'ds.coda', 'dc.fine', 'cut', 'tenor', 'tied', 'slur', 'Grace note', '/3', 'ledger line', 'top to bottom', 'tilted', 'consecutive pages', 'top part and a bottom part', NOT_MUSIC, '? 12:']) {
       expect(OMR_SYSTEM_PROMPT, needle).toContain(needle);
     }
   });
@@ -333,6 +333,13 @@ describe('runOmr with the text format', () => {
     const e = deps({ callClaude: vi.fn(async (_r, f) => (f ? reading : 'no idea')) });
     expect(await runOmr({ images: [img] }, 'auto', e)).toMatchObject({ ok: true });
     expect(e.callClaude).toHaveBeenCalledTimes(2); // the redo is not followed by a third call
+  });
+  it('skips the second look when the first reading was slow (the request must not time out)', async () => {
+    let t = 0;
+    const d = deps({ callClaude: vi.fn(async () => { t += 200_000; return reading; }), now: () => t });
+    const r = await runOmr({ images: [img] }, 'auto', d);
+    expect(d.callClaude).toHaveBeenCalledTimes(1);
+    expect(r.ok && r.warnings).toEqual(['Bar 3 may be misread (has 2 of 4 beats).']);
   });
   it('several parts: problems name the part', async () => {
     const two = 'part: Tpt\n1: C5:w\n2: C5:w\n3: C5:w\npart: Tbn\nclef: bass\n1: C3:w\n2: C3:h\n3: C3:w';

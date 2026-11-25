@@ -141,6 +141,9 @@ export function decodeXmlBytes(bytes: Uint8Array): string {
   return new TextDecoder('utf-8').decode(bytes).replace(/^﻿/, '');
 }
 
+/** Largest score text the app will open (a long band score is a few MB). */
+export const MAX_XML_BYTES = 30_000_000;
+
 /** Extract the main score XML from a compressed .mxl container. */
 export async function unzipMxl(data: ArrayBuffer | Uint8Array): Promise<string> {
   const zip = await JSZip.loadAsync(data);
@@ -155,12 +158,17 @@ export async function unzipMxl(data: ArrayBuffer | Uint8Array): Promise<string> 
     path = Object.keys(zip.files).find((n) => /\.(xml|musicxml)$/i.test(n) && !n.startsWith('META-INF/'));
   }
   if (!path) throw new MusicXmlError('Could not find a score inside the .mxl file');
+  // a tiny archive can unpack to gigabytes: check the declared size before unpacking
+  const declared = (zip.file(path) as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize;
+  if (typeof declared === 'number' && declared > MAX_XML_BYTES) throw new MusicXmlError('That score is too large to open.');
   const bytes = await zip.file(path)!.async('uint8array');
+  if (bytes.length > MAX_XML_BYTES) throw new MusicXmlError('That score is too large to open.');
   return decodeXmlBytes(bytes);
 }
 
 /** Read an uploaded MusicXML file (.musicxml, .xml or .mxl) into an XML string. */
 export async function readMusicXmlFile(bytes: Uint8Array, filename: string): Promise<string> {
+  if (bytes.length > MAX_XML_BYTES) throw new MusicXmlError('That file is too large to open.');
   const isZip = bytes.length > 3 && bytes[0] === 0x50 && bytes[1] === 0x4b;
   const xml = isZip || /\.mxl$/i.test(filename) ? await unzipMxl(bytes) : decodeXmlBytes(bytes);
   const v = validateMusicXml(xml);

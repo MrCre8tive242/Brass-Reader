@@ -31,7 +31,15 @@ export interface OmrDeps {
   /** Calls the model. `followUp` is set on the second attempt (a fresh request with extra instructions). */
   callClaude: (req: OmrRequest, followUp?: string) => Promise<string>;
   callAudiveris: (images: string[]) => Promise<{ musicxml: string; warnings?: string[] }>;
+  /** Clock (tests). */
+  now?: () => number;
 }
+
+/**
+ * A second look is only started if the first reading came back within this time: the whole request must
+ * finish inside the server's 300 s limit, and a usable reading with a few flagged bars beats a timeout.
+ */
+export const SECOND_LOOK_BUDGET_MS = 140_000;
 
 /** A bar the reader itself was unsure about. `bar` is the printed bar label. */
 export interface OmrFlag { bar: string; text: string }
@@ -183,6 +191,8 @@ function notMusic(reason: string): ClaudeResult {
 
 /** At most two model calls per scan: the reading, then one second look (targeted at the bars that fail the check). */
 async function viaClaude(req: OmrRequest, deps: OmrDeps): Promise<ClaudeResult> {
+  const now = deps.now ?? Date.now;
+  const t0 = now();
   let raw: string;
   try {
     raw = await deps.callClaude(req);
@@ -210,6 +220,10 @@ async function viaClaude(req: OmrRequest, deps: OmrDeps): Promise<ClaudeResult> 
     return first;
   }
   if (first.problems.length === 0) return first;
+  if (now() - t0 > SECOND_LOOK_BUDGET_MS) {
+    console.info('[omr] first reading was slow: skipping the second look');
+    return first;
+  }
 
   // some bars fail the check: ask for a second look at exactly those bars
   let best = first;
