@@ -1,11 +1,12 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { deleteGroove, listGrooves, renameGroove, saveGroove, type StoredGroove } from '@/lib/grooveStore';
-import { grooveBars, makeGrooveFile, parseGrooveFile } from '@/lib/groove';
+import { STARTER_LABEL, grooveBars, makeGrooveFile, parseGrooveFile, starterGrooves, type KitPattern } from '@/lib/groove';
 import { newId } from '@/lib/library';
 import type { Analysis } from '@/lib/grooveAnalyze';
 import { AlertIcon, BackIcon, MicIcon, TrashIcon } from './Icons';
 import { GrooveRecorder, GrooveReview } from './GrooveRecorder';
+import KitEditor from './KitEditor';
 import { useGroovePreview } from './useGroovePreview';
 
 interface Props {
@@ -20,6 +21,7 @@ interface Props {
 type View =
   | { k: 'list' }
   | { k: 'record' }
+  | { k: 'kit'; existing?: StoredGroove; from?: { name: string; pattern: KitPattern; starter: boolean } }
   | { k: 'review'; samples: Float32Array; rate: number; analysis: Analysis; existing?: StoredGroove };
 
 function download(data: BlobPart, type: string, name: string) {
@@ -67,7 +69,7 @@ export default function GrooveStudio({ getCtx, clickBpm, onClose, onChanged }: P
     try {
       const buf = await decode(g);
       setPreviewId(g.id);
-      preview.play(g, buf, g.kind === 'recorded' ? g.bpm ?? 100 : 100);
+      preview.play(g, buf, g.kind === 'recorded' ? g.bpm ?? 100 : 110);
     } catch { setError('That recording could not be played.'); }
   }
 
@@ -120,7 +122,7 @@ export default function GrooveStudio({ getCtx, clickBpm, onClose, onChanged }: P
     setView({ k: 'list' });
   }
 
-  const title = view.k === 'list' ? 'Grooves' : view.k === 'record' ? 'Record your drum line' : view.existing ? 'Edit groove' : 'Your recording';
+  const title = view.k === 'list' ? 'Grooves' : view.k === 'record' ? 'Record your drum line' : view.k === 'kit' ? 'Step pattern' : view.existing ? 'Edit groove' : 'Your recording';
 
   return (
     <div className="studio" role="dialog" aria-label="Grooves" data-testid="groove-studio">
@@ -134,6 +136,9 @@ export default function GrooveStudio({ getCtx, clickBpm, onClose, onChanged }: P
         {view.k === 'record' && (
           <GrooveRecorder getCtx={getCtx} clickBpm={clickBpm} onCancel={() => setView({ k: 'list' })} onDone={(r) => setView({ k: 'review', ...r })} />
         )}
+        {view.k === 'kit' && (
+          <KitEditor getCtx={getCtx} existing={view.existing} from={view.from} onSave={saved} onCancel={() => setView({ k: 'list' })} />
+        )}
         {view.k === 'review' && (
           <GrooveReview getCtx={getCtx} samples={view.samples} rate={view.rate} analysis={view.analysis} existing={view.existing} onSave={saved} onCancel={() => setView({ k: 'list' })} />
         )}
@@ -141,12 +146,29 @@ export default function GrooveStudio({ getCtx, clickBpm, onClose, onChanged }: P
           <>
             <div className="prow">
               <button type="button" className="btn primary" onClick={() => { setNotice(null); setView({ k: 'record' }); }}><MicIcon size={20} /> Record your drum line</button>
+              <button type="button" className="btn" onClick={() => { setNotice(null); setView({ k: 'kit' }); }}>New step pattern</button>
               <label className="btn" role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') (e.currentTarget.querySelector('input') as HTMLInputElement)?.click(); }}>
                 Import a groove file
                 <input type="file" accept=".json,application/json" className="sr-only" aria-label="Import a groove file" onChange={(e) => { void importFile(e.target.files?.[0]); e.target.value = ''; }} />
               </label>
             </div>
             <p className="muted small">Grooves stay on this device. Export one to send it to the band: the file holds the recording too.</p>
+            <h3 className="sec">Starter patterns</h3>
+            <div data-testid="starter-list">
+              <p className="starter-note">{STARTER_LABEL}</p>
+              <ul className="grooves">
+                {starterGrooves().map((g) => (
+                  <li key={g.id} className="groove" data-testid="starter-row">
+                    <div className="ginfo"><strong>{g.name}</strong><span className="muted small">{meta(g)}</span></div>
+                    <div className="gbtns">
+                      <button type="button" className="btn sm" onClick={() => togglePreview(g)} aria-label={`${previewId === g.id ? 'Stop' : 'Play'} ${g.name}`}>{previewId === g.id ? 'Stop' : 'Play'}</button>
+                      <button type="button" className="btn sm" onClick={() => { preview.stop(); setView({ k: 'kit', from: { name: g.name.replace(/^Starter /, ''), pattern: g.pattern!, starter: true } }); }} aria-label={`Edit a copy of ${g.name}`}>Edit a copy</button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <h3 className="sec">Your grooves</h3>
             {items.length === 0
               ? <p className="muted" data-testid="no-grooves">No grooves yet. Record your drummers, then play along.</p>
               : (
@@ -166,7 +188,7 @@ export default function GrooveStudio({ getCtx, clickBpm, onClose, onChanged }: P
                       </div>
                       <div className="gbtns">
                         <button type="button" className="btn sm" onClick={() => togglePreview(g)} aria-label={`${previewId === g.id ? 'Stop' : 'Play'} ${g.name}`}>{previewId === g.id ? 'Stop' : 'Play'}</button>
-                        {g.kind === 'recorded' && <button type="button" className="btn sm" onClick={() => edit(g)} aria-label={`Edit ${g.name}`}>Edit</button>}
+                        <button type="button" className="btn sm" onClick={() => (g.kind === 'recorded' ? edit(g) : setView({ k: 'kit', existing: g }))} aria-label={`Edit ${g.name}`}>Edit</button>
                         <button type="button" className="btn sm ghost" onClick={() => setRenaming({ id: g.id, text: g.name })} aria-label={`Rename ${g.name}`}>Rename</button>
                         <button type="button" className="btn sm ghost" onClick={() => exportOne(g)} aria-label={`Export ${g.name}`}>Export</button>
                         {confirmDel === g.id
