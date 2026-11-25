@@ -283,3 +283,5 @@ details.warn summary strong { margin-right: 0.25em; }
 .take { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
 .takebtns { display: flex; gap: 6px; }
 .takebtns .btn.sm { padding: 0 12px; }
+
+.sheet[hidden] { display: none; }

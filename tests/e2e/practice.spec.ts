@@ -15,8 +15,8 @@ test.describe('A. loop and speed trainer', () => {
     await expect(page.getByTestId('loop-mark')).toHaveCount(2);
     await page.getByRole('button', { name: 'Close practice tools' }).click();
 
-    await page.getByLabel('BPM').fill('240');
-    await page.getByLabel('BPM').blur();
+    await page.getByLabel('BPM', { exact: true }).fill('240');
+    await page.getByLabel('BPM', { exact: true }).blur();
     await page.getByRole('button', { name: 'Play' }).click();
     // 2 bars at 240 BPM = 2 s per pass: watch for ~5 s, the counter must never leave bars 1-2
     const seen = new Set<string>();
@@ -83,7 +83,7 @@ test.describe('A. loop and speed trainer', () => {
     await expect(page.getByTestId('pass-label')).toHaveText('Pass 1 · 200 → 240 BPM');
     await expect(page.getByTestId('pass-label')).toHaveText('Pass 2 · 220 → 240 BPM', { timeout: 6000 });
     await expect(page.getByTestId('pass-label')).toHaveText('Pass 3 · 240 → 240 BPM', { timeout: 6000 });
-    await expect(page.getByLabel('BPM')).toHaveValue('240');
+    await expect(page.getByLabel('BPM', { exact: true })).toHaveValue('240');
     await page.getByRole('button', { name: 'Pause' }).click();
   });
 });

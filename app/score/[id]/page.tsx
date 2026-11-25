@@ -15,6 +15,11 @@ import { detectSourceInstrument, summariseScore } from '@/lib/musicxml';
 import { songPartsOf, fitBars, mergeScores, mergeTimelines, type SongPart } from '@/lib/song';
 import { DEFAULT_MIX, normalizeMix, type MixState } from '@/lib/mixer';
 import BandPanel from '@/components/BandPanel';
+import PitchPanel from '@/components/PitchPanel';
+import { MicSession } from '@/lib/micSession';
+import { type NoteResult } from '@/lib/pitch';
+import { offsetInBar } from '@/lib/timeline';
+import type { NoteMark } from '@/components/ScoreView';
 import { AlertIcon, BackIcon } from '@/components/Icons';
 import { analyseAndRepair } from '@/lib/repair';
 import { Player } from '@/lib/player';
@@ -53,6 +58,9 @@ export default function ScorePage() {
   const [loopDraft, setLoopDraft] = useState<LoopRange>({ from: 1, to: 2 });
   const [trainer, setTrainer] = useState<Trainer>(DEFAULT_TRAINER);
   const [pass, setPass] = useState<{ n: number; bpm: number } | null>(null);
+  const mic = useMemo(() => new MicSession(), []);
+  const [pitchOn, setPitchOn] = useState(false);
+  const [pitchResults, setPitchResults] = useState<(NoteResult | undefined)[]>([]);
   const [checksOpen, setChecksOpen] = useState(false);
   const player = useRef<Player | null>(null);
   const view = useRef<ScoreViewHandle>(null);
@@ -180,7 +188,14 @@ export default function ScorePage() {
     p.loadParts(soundKey.split(',') as InstrumentId[]).then((e) => { if (alive) setEngine(e); }).catch(() => { if (alive) setEngine('synth'); });
     return () => { alive = false; };
   }, [soundKey, loadTry]);
-  useEffect(() => { player.current?.setMix(parts.map((p) => mix[p.id] ?? DEFAULT_MIX)); }, [parts, mix]);
+  // while the pitch check listens, my own part is silent (only the others and the click play); this is not saved
+  useEffect(() => {
+    player.current?.setMix(parts.map((p, i) => {
+      const m = mix[p.id] ?? DEFAULT_MIX;
+      return pitchOn && i === myIdx ? { ...m, mute: true, solo: false } : m;
+    }));
+  }, [parts, mix, pitchOn, myIdx]);
+  const getPlayer = useCallback(() => player.current, []);
 
   useEffect(() => {
     if (derived?.tl && player.current) {
@@ -224,6 +239,19 @@ export default function ScorePage() {
   const changeCountIn = useCallback((v: boolean) => { setCountIn(v); lsSet('brass-reader:countin', v ? '1' : '0'); }, []);
 
   const tlNow = derived?.tl ?? null;
+  // the notes of my part at their sounding pitch: what the pitch check listens for
+  const myNotes = useMemo(() => (tlNow ? tlNow.events.filter((e) => e.part === undefined || e.part === myIdx).map((e) => ({ timeQ: e.timeQ, durQ: e.durQ, midi: e.midi, measure: e.measure })) : []), [tlNow, myIdx]);
+  const pitchMarks = useMemo<NoteMark[]>(() => {
+    if (!tlNow || !pitchOn) return [];
+    const out: NoteMark[] = [];
+    pitchResults.forEach((r, i) => {
+      const n = myNotes[i];
+      if (!r || !n) return;
+      out.push({ measure: n.measure, offQ: offsetInBar(tlNow, n.timeQ), kind: r.status, arrow: r.reason === 'sharp' ? 'up' : r.reason === 'flat' ? 'down' : undefined });
+    });
+    return out;
+  }, [tlNow, pitchOn, pitchResults, myNotes]);
+  const marks = pitchMarks;
   const measureCount = tlNow?.measureCount ?? 0;
   const measureCountRef = useRef(0);
   measureCountRef.current = measureCount;
@@ -395,6 +423,7 @@ export default function ScorePage() {
             xml={derived.xml}
             zoom={zoom}
             flagged={flagged}
+            marks={marks}
             loop={normalizeLoop(loop, measureCount)}
             onLoopSelect={pickLoop}
             onSeekMeasure={(m) => player.current?.seek(m)}
@@ -414,6 +443,14 @@ export default function ScorePage() {
           <BandPanel
             parts={parts} myIdx={myIdx} mix={mix} full={full} scoreId={id} warnings={derived?.warnings ?? []}
             onMix={onMix} onMy={(i) => onPart(String(i))} onFull={onFull} onInstrument={onPartInstrument}
+          />
+        </Section>
+        <Section id="pitch" title="Pitch check (microphone)">
+          <PitchPanel
+            getPlayer={getPlayer} session={mic} notes={myNotes} playing={playing} enabled={pitchOn}
+            onEnabled={(v) => { setPitchOn(v); if (!v) setPitchResults([]); }}
+            onResults={setPitchResults} onLoopBar={(m) => pickLoop(m, m)}
+            partName={INSTRUMENTS[target].name}
           />
         </Section>
         <Section id="loop" title="Loop and speed trainer" open>

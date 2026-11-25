@@ -67,7 +67,7 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
   const gesture = useRef<{ bar: number; x: number; y: number; dragging: boolean; timer?: ReturnType<typeof setTimeout>; mouse: boolean } | null>(null);
   const swallowClick = useRef(false);
   const noteEls = useRef<Map<string, SVGElement[]> | null>(null);
-  const painted = useRef<{ els: SVGElement[]; added: Element[] }>({ els: [], added: [] });
+  const painted = useRef<{ els: SVGElement[]; added: Element[]; groups: SVGElement[] }>({ els: [], added: [], groups: [] });
 
   function collect(osmd: Osmd) {
     const c = osmd.cursor;
@@ -209,7 +209,7 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
       measureBoxes(osmd);
       collect(osmd);
       noteEls.current = null;
-      painted.current = { els: [], added: [] }; // the redraw replaced every element
+      painted.current = { els: [], added: [], groups: [] }; // the redraw replaced every element
       lastW = w;
       const { q, measure, off } = lastPos.current;
       cur.current = 0;
@@ -336,7 +336,8 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
   function clearAnnotations() {
     for (const el of painted.current.els) { el.style.removeProperty('fill'); el.style.removeProperty('stroke'); }
     for (const el of painted.current.added) el.remove();
-    painted.current = { els: [], added: [] };
+    for (const g of painted.current.groups) g.removeAttribute('data-mark');
+    painted.current = { els: [], added: [], groups: [] };
   }
 
   function paint() {
@@ -369,6 +370,7 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
       for (const g of map.get(noteKey(m.measure, m.offQ)) ?? []) {
         g.querySelectorAll<SVGElement>('path, rect, ellipse, circle').forEach((c) => { c.style.fill = color; c.style.stroke = color; painted.current.els.push(c); });
         g.setAttribute('data-mark', m.kind);
+        painted.current.groups.push(g);
         if (m.arrow) addText(g, m.arrow === 'up' ? '↑' : '↓', color, -1, { 'data-arrow': m.arrow });
       }
     }

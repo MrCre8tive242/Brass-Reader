@@ -187,7 +187,7 @@ test('portrait 375: transport is at most 2 rows, Play is centred and the largest
     expect(r.w, sel).toBeGreaterThanOrEqual(47.5);
     expect(play.w * play.h, sel).toBeGreaterThan(r.w * r.h);
   }
-  for (const sel of ['.chk:nth-of-type(1)', 'label.chk >> nth=1', 'input[aria-label="BPM"]', '.zoom button']) {
+  for (const sel of ['.transport .chk:nth-of-type(1)', '.transport label.chk >> nth=1', 'input[aria-label="BPM"]', '.zoom button']) {
     expect((await rect(page, sel)).h, sel).toBeGreaterThanOrEqual(47.5);
   }
   // no horizontal overflow, transport stays inside the viewport

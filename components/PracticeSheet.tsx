@@ -10,9 +10,9 @@ interface Props {
 
 /** Bottom drawer above the transport: every practice tool lives here so the transport stays two rows. */
 export default function PracticeSheet({ open, onClose, children }: Props) {
-  if (!open) return null;
+  // stays mounted when closed: the pitch check and the recorder keep running while the score is in view
   return (
-    <div className="sheet" role="dialog" aria-label="Practice tools" data-testid="practice-sheet">
+    <div className="sheet" role="dialog" aria-label="Practice tools" data-testid="practice-sheet" hidden={!open}>
       <div className="sheet-head">
         <h2>Practice</h2>
         <button type="button" className="tbtn sm" onClick={onClose} aria-label="Close practice tools"><CloseIcon size={20} /></button>
