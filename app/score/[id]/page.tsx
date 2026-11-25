@@ -15,6 +15,8 @@ import { detectSourceInstrument } from '@/lib/musicxml';
 import { analyseAndRepair } from '@/lib/repair';
 import { Player } from '@/lib/player';
 
+const ZOOM_MIN = 0.6, ZOOM_MAX = 2.2, ZOOM_STEP = 0.15;
+
 function lsGet(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
 function lsSet(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* ignore */ } }
 
@@ -25,6 +27,7 @@ export default function ScorePage() {
   const [source, setSource] = useState<InstrumentId>('trumpet');
   const [target, setTarget] = useState<InstrumentId>('trumpet');
   const [bpm, setBpm] = useState(100);
+  const [zoom, setZoom] = useState(1);
   const [metronome, setMetronome] = useState(false);
   const [countIn, setCountIn] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -35,6 +38,14 @@ export default function ScorePage() {
   const player = useRef<Player | null>(null);
   const view = useRef<ScoreViewHandle>(null);
   const measureRef = useRef(1);
+
+  useEffect(() => {
+    const z = Number(lsGet('brass-reader:zoom'));
+    if (z >= ZOOM_MIN && z <= ZOOM_MAX) setZoom(z);
+  }, []);
+  const changeZoom = useCallback((d: number) => {
+    setZoom((z) => { const n = Math.round(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z + d)) * 100) / 100; lsSet('brass-reader:zoom', String(n)); return n; });
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -116,7 +127,8 @@ export default function ScorePage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' && (t as HTMLInputElement).type !== 'checkbox' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
+      // typing / toggling in a form control must not start playback
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       if (e.code === 'Space') { e.preventDefault(); playPause(); }
       else if (e.code === 'ArrowLeft') { e.preventDefault(); goBar(-1); }
       else if (e.code === 'ArrowRight') { e.preventDefault(); goBar(1); }
@@ -145,6 +157,10 @@ export default function ScorePage() {
       <header className="topbar">
         <Link href="/" className="back" aria-label="Back to library">‹</Link>
         <h1 className="title">{score.title}</h1>
+        <div className="zoom" role="group" aria-label="Score size">
+          <button type="button" onClick={() => changeZoom(-ZOOM_STEP)} aria-label="Zoom out" disabled={zoom <= ZOOM_MIN}>A−</button>
+          <button type="button" onClick={() => changeZoom(ZOOM_STEP)} aria-label="Zoom in" disabled={zoom >= ZOOM_MAX}>A+</button>
+        </div>
       </header>
       <main className="page">
         <InstrumentPicker source={source} target={target} onSource={onSource} onTarget={onTarget} hint={sourceHint} />
@@ -165,6 +181,7 @@ export default function ScorePage() {
           <ScoreView
             ref={view}
             xml={derived.xml}
+            zoom={zoom}
             onSeekMeasure={(m) => player.current?.seek(m)}
             onReady={() => setScoreReady(true)}
             onError={setError}

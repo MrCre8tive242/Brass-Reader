@@ -1,5 +1,5 @@
 'use client';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface Props {
   playing: boolean;
@@ -46,17 +46,32 @@ export default function Transport(p: Props) {
       p.onBpm(clampBpm(60000 / avg));
     }
   };
+  const rootRef = useRef<HTMLDivElement>(null);
+  // publish the real height so the page can leave room for it (it changes with orientation)
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const set = () => document.documentElement.style.setProperty('--transport-h', `${el.offsetHeight}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(el);
+    return () => { ro.disconnect(); document.documentElement.style.removeProperty('--transport-h'); };
+  }, []);
+
   return (
-    <div className="transport" role="group" aria-label="Playback controls">
+    <div className="transport" role="group" aria-label="Playback controls" ref={rootRef}>
       <div className="row main">
-        <button type="button" className="tbtn" onClick={p.onPrev} aria-label="Previous bar" disabled={!p.ready}>⏮</button>
-        <button type="button" className="tbtn play" onClick={p.onPlayPause} aria-label={p.playing ? 'Pause' : 'Play'} disabled={!p.ready}>
-          {p.playing ? '⏸' : '▶'}
-        </button>
-        <button type="button" className="tbtn" onClick={p.onNext} aria-label="Next bar" disabled={!p.ready}>⏭</button>
         <div className="barcount" data-testid="bar-counter" aria-live="off">
           {p.barLabel === 'Pickup' ? 'Pickup' : `Bar ${p.barLabel ?? p.measure} / ${p.barTotal ?? p.measureCount}`}
         </div>
+        <div className="cluster">
+          <button type="button" className="tbtn" onClick={p.onPrev} aria-label="Previous bar" disabled={!p.ready}>⏮</button>
+          <button type="button" className="tbtn play" onClick={p.onPlayPause} aria-label={p.playing ? 'Pause' : 'Play'} disabled={!p.ready}>
+            {p.playing ? '⏸' : '▶'}
+          </button>
+          <button type="button" className="tbtn" onClick={p.onNext} aria-label="Next bar" disabled={!p.ready}>⏭</button>
+        </div>
+        <button type="button" className="tbtn sm tap" onClick={tap} aria-label="Tap tempo">Tap</button>
       </div>
       <div className="row opts">
         <div className="bpm">
@@ -69,7 +84,6 @@ export default function Transport(p: Props) {
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); (e.target as HTMLInputElement).blur(); } }}
           />
           <button type="button" className="tbtn sm" onClick={() => step(1)} aria-label="Faster">+</button>
-          <button type="button" className="tbtn sm tap" onClick={tap}>Tap</button>
         </div>
         <label className="chk"><input type="checkbox" checked={p.metronome} onChange={(e) => p.onMetronome(e.target.checked)} /> Click</label>
         <label className="chk"><input type="checkbox" checked={p.countIn} onChange={(e) => p.onCountIn(e.target.checked)} /> Count-in</label>

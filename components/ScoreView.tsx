@@ -8,6 +8,8 @@ export interface ScoreViewHandle {
 
 interface Props {
   xml: string;
+  /** User zoom multiplier on top of the width-based default (1 = automatic size). */
+  zoom?: number;
   onSeekMeasure: (measure: number) => void;
   onReady?: (info: { measureCount: number }) => void;
   onError?: (msg: string) => void;
@@ -22,7 +24,7 @@ type Osmd = any;
 
 const UNIT = 10; // OSMD units are 10px at zoom 1
 
-const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, onSeekMeasure, onReady, onError }, ref) {
+const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, zoom = 1, onSeekMeasure, onReady, onError }, ref) {
   const wrap = useRef<HTMLDivElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const hl = useRef<HTMLDivElement>(null);
@@ -34,6 +36,9 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, o
   const lastPos = useRef<{ q: number; measure: number; off: number }>({ q: 0, measure: 1, off: 0 });
   const lastSystemY = useRef(-1);
   const [busy, setBusy] = useState(true);
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const rerender = useRef<((scroll: boolean) => void) | null>(null);
   const seekRef = useRef(onSeekMeasure);
   seekRef.current = onSeekMeasure;
 
@@ -109,7 +114,7 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, o
     return 0;
   }
 
-  function place(q: number, measure: number, scroll: boolean, offsetQ = 0) {
+  function place(q: number, measure: number, scroll: boolean, offsetQ = 0, forceScroll = false) {
     lastPos.current = { q, measure, off: offsetQ };
     const osmd = osmdRef.current;
     if (!osmd || !stepCount.current) return;
@@ -129,20 +134,25 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, o
       el.style.width = `${b.w}px`;
       el.style.height = `${b.h}px`;
     } else if (el) el.style.display = 'none';
-    if (scroll) autoScroll(c.cursorElement as HTMLElement | undefined);
+    if (scroll) autoScroll(c.cursorElement as HTMLElement | undefined, forceScroll);
   }
 
-  function autoScroll(el?: HTMLElement) {
+  function autoScroll(el?: HTMLElement, force = false) {
     if (!el) return;
     const r = el.getBoundingClientRect();
     if (!r.height) return;
     const top = r.top + window.scrollY;
     const vh = window.innerHeight;
-    const bottomBand = vh - 190; // keep clear of the sticky transport
+    // keep the cursor between the sticky header and the (measured) transport
+    const header = (document.querySelector('.topbar') as HTMLElement | null)?.offsetHeight ?? 60;
+    const transport = (document.querySelector('.transport') as HTMLElement | null)?.offsetHeight ?? 150;
+    const topLimit = header + 10;
+    const bottomBand = vh - transport - 10;
     const sysChanged = Math.abs(top - lastSystemY.current) > 20;
     lastSystemY.current = top;
-    if (r.top < 70 || r.bottom > bottomBand || sysChanged && (r.top > vh * 0.55)) {
-      window.scrollTo({ top: Math.max(0, top - vh * 0.28), behavior: 'smooth' });
+    if (force || r.top < topLimit || r.bottom > bottomBand || sysChanged && (r.top > topLimit + (bottomBand - topLimit) * 0.55)) {
+      const room = Math.max(0, bottomBand - topLimit);
+      window.scrollTo({ top: Math.max(0, top - topLimit - room * 0.2), behavior: force ? 'auto' : 'smooth' });
     }
   }
 
@@ -154,11 +164,11 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, o
     let timer: ReturnType<typeof setTimeout> | undefined;
     let lastW = 0;
 
-    async function renderAll(loadXml: boolean) {
+    async function renderAll(loadXml: boolean, scrollAfter = false) {
       const osmd = osmdRef.current;
       if (!osmd || cancelled) return;
       const w = wrap.current?.clientWidth ?? 360;
-      osmd.zoom = w < 520 ? 0.62 : w < 900 ? 0.8 : 1;
+      osmd.zoom = (w < 520 ? 0.62 : w < 900 ? 0.8 : 1) * zoomRef.current;
       if (loadXml) await osmd.load(xml);
       if (cancelled) return;
       osmd.render();
@@ -168,7 +178,14 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, o
       const { q, measure, off } = lastPos.current;
       cur.current = 0;
       place(q, measure, false, off);
+      if (scrollAfter) {
+        // after rotate / zoom the layout moved: put the cursor back in view once it has settled
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (!cancelled) autoScroll(osmd.cursor.cursorElement as HTMLElement | undefined, true);
+        }));
+      }
     }
+    rerender.current = (scroll) => { renderAll(false, scroll).catch(() => {}); };
 
     (async () => {
       setBusy(true);
@@ -198,7 +215,7 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, o
             const w = wrap.current?.clientWidth ?? 0;
             if (Math.abs(w - lastW) < 8) return;
             clearTimeout(timer);
-            timer = setTimeout(() => { renderAll(false).catch(() => {}); }, 200);
+            timer = setTimeout(() => { renderAll(false, true).catch(() => {}); }, 200);
           });
           ro.observe(wrap.current);
         }
@@ -210,6 +227,14 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, o
     return () => { cancelled = true; clearTimeout(timer); ro?.disconnect(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [xml]);
+
+  // zoom -/+: redraw at the new size and keep the cursor in view
+  const firstZoom = useRef(true);
+  useEffect(() => {
+    if (firstZoom.current) { firstZoom.current = false; return; }
+    const t = setTimeout(() => rerender.current?.(true), 120);
+    return () => clearTimeout(t);
+  }, [zoom]);
 
   function onClick(e: React.MouseEvent) {
     const h = host.current;
