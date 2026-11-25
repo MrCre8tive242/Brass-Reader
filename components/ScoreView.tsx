@@ -134,7 +134,7 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
         // where the cursor stands at this step (for the glide between notes)
         c.update();
         const el = c.cursorElement as HTMLElement | undefined;
-        const x = (parseFloat(el?.style.left ?? '') || 0) + (parseFloat(el?.style.width ?? '') || 0) / 2;
+        const x = (parseFloat(el?.style.left ?? '') || 0) + (el?.offsetWidth || 0) / 2;
         (byBar[m] ??= []).push({ off, idx, x });
         barLens.current[m] = (c.iterator.CurrentMeasure?.Duration?.RealValue ?? 1) * 4;
       }
@@ -184,10 +184,14 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
     const list = steps.current[measure];
     const b = boxes.current[measure - 1];
     const left = parseFloat(el.style.left) || 0;
-    const w = parseFloat(el.style.width) || 0;
+    const w = el.offsetWidth || 0;
     let dx = 0;
     if (list?.length && b && b.w > 0) {
-      const x = glideX(list, offsetQ, barLens.current[measure] ?? 4, b.x + b.w - w);
+      // the bar boxes and the cursor are placed in different elements: bring the bar end into the cursor's frame
+      const cp = el.parentElement?.getBoundingClientRect();
+      const hp = hl.current?.parentElement?.getBoundingClientRect();
+      const shift = cp && hp ? hp.left - cp.left : 0;
+      const x = glideX(list, offsetQ, barLens.current[measure] ?? 4, shift + b.x + b.w - w / 2 - 1);
       if (x !== null) dx = x - (left + w / 2);
       // never further than the bar: a stale step (wrong line) must not throw the line across the page
       if (Math.abs(dx) > b.w) dx = 0;
