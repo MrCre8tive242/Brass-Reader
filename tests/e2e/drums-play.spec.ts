@@ -65,7 +65,11 @@ test.describe('D3. drums under the score', () => {
     await page.waitForTimeout(500);
     log = await readLog(page);
     expect(log.length).toBeGreaterThan(0);
-    expect(log[0].q % 4).toBe(0);
+    // a hit or two of the old bar may still have been handed over between clearing the log and the tap landing:
+    // the jump is where the hits stop following the old grid, and the first hit after it is on a bar line
+    let at = 0;
+    for (let i = 1; i < log.length; i++) if (Math.abs(log[i].t - log[i - 1].t - ((log[i].q - log[i - 1].q) * 60) / 120) > 0.03) { at = i; break; }
+    expect(log[at].q % 4).toBe(0);
     await page.getByRole('button', { name: 'Pause' }).click();
     expect(errs).toEqual([]);
   });

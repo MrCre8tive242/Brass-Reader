@@ -253,8 +253,8 @@ export function GrooveReview({ getCtx, samples, rate, analysis, existing, wav, o
       </div>
       <div className="prow" role="group" aria-label="Hits found">
         <span className="plabel">Hits found</span>
-        <button type="button" className="btn sm" onClick={() => setSens((v) => Math.max(0.35, (v ?? 1) / 1.5))} disabled={(sens ?? 1) <= 0.36} aria-label="Find fewer hits">Fewer</button>
-        <button type="button" className="btn sm" onClick={() => setSens((v) => Math.min(3.4, (v ?? 1) * 1.5))} disabled={(sens ?? 1) >= 3.3} aria-label="Find more hits">More</button>
+        <button type="button" className="btn sm" onClick={() => setSens((v) => Math.max(0.15, (v ?? 1) / 1.6))} disabled={(sens ?? 1) <= 0.16} aria-label="Find fewer hits">Fewer</button>
+        <button type="button" className="btn sm" onClick={() => setSens((v) => Math.min(4.1, (v ?? 1) * 1.6))} disabled={(sens ?? 1) >= 4} aria-label="Find more hits">More</button>
         <span className="muted small" data-testid="hits-found">{found.times.length} in the recording</span>
       </div>
       <div className="prow">

@@ -323,6 +323,7 @@ details.warn summary strong { margin-right: 0.25em; }
 .kitbar { margin: 8px 0 12px; }
 .kitbar-h { margin: 6px 0; font-size: 0.95rem; }
 .kitopts { display: flex; flex-wrap: wrap; column-gap: 18px; }
+.btn.sm.brush { padding-left: 10px; padding-right: 10px; }
 .kitgrid { overflow-x: auto; overscroll-behavior-x: contain; padding-bottom: 8px; scrollbar-width: thin; }
 .kitrow { display: flex; align-items: center; gap: 8px; width: max-content; margin: 5px 0; padding-right: 14px; }
 .kitlabel { position: sticky; left: 0; z-index: 2; flex: 0 0 70px; width: 70px; align-self: stretch; display: flex; align-items: center; font-size: 0.8rem; font-weight: 700; line-height: 1.15; color: var(--text); background: var(--bg); box-shadow: 6px 0 6px -4px var(--bg); }

@@ -66,3 +66,6 @@ NOT TESTED
 - MIDI: recorded grooves export every hit as GM note 38 (no kick/snare classification).
 
 Final run: 351 vitest unit tests, 73 Playwright e2e tests (63 earlier + 10 new; Chromium 375x812), `npm run build` passes.
+
+### Refine pass
+The recording analysis, the slicing and playback of recorded hits, the kit sounds and the step editor were reworked after this was written: see "Phase 2 Refinement Log" in PHASE2_PLAN.md (sections 1, 2 and 4). In short: `detectOnsets` returns `starts` and `levels` too, `estimateTempo` takes options (`hint`, `near`, `levels`, `from`) and is the primary tempo source, slices carry a lead-in (`Slice.pre`) and cross-fade, `playbackRateFor` eases instead of snapping, the kit is rendered by `lib/kitSynth.ts`, and `useGroovePreview` loops until stopped.

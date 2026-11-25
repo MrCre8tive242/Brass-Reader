@@ -1,8 +1,8 @@
 # Brass Reader — Phase 2 plan (practice features)
 
 ## STATUS
-Phase: BUILD DONE (A, B, C1, C2, C3, E built; D not built)
-Next: QA
+Phase: REFINE DONE (A, B, C1, C2, C3, D, E built, QA'd twice, fixed, refined)
+Next: try it at a rehearsal with real drummers, real horns and real phones (see "Still untested" at the end of the Refinement Log)
 Order: build (Sonnet) → QA (Sonnet) → fix (Sonnet) → refine (Fable, high)
 Drum groove (feature D) is waiting on research: docs/GROOVE_RESEARCH.md. Don't build it in this pass.
 
@@ -104,3 +104,56 @@ Not fixed (and why)
 - Not tested: real iOS Safari (share sheet, vibration, long-press), screen readers, real microphones (the mic light and the late-opening microphone were tested with Chromium's fake device only).
 
 Tests after this pass: 354 vitest unit tests, 95 Playwright e2e tests (all pass; one drums timing test, `drums-play` "a starter pattern ... bar jump", failed once under load in a full run and passed 3 of 3 alone and on the full rerun), `npm run build` passes. New specs: `dialogs.spec.ts`, `loop-feedback.spec.ts`, `mic-light.spec.ts`, `groove-polish.spec.ts`. Two commits: sousaphone/alternates, then everything else (the UI changes share `page.tsx` and `globals.css`, so they were not split further).
+
+## Phase 2 Refinement Log
+
+Five commits ("Brass Reader refine 2: ..."): drum recording, starter kit sound, pitch check, practice flow + robustness, docs. Tests at the end: 410 vitest unit tests (24 files), 102 Playwright e2e tests, `npm run build` passes; 17 of the new/changed e2e tests were also run against `next start` (production CSP) and pass. No new dependencies.
+
+### 1. Drum recording (`lib/grooveAnalysis.ts`, `lib/grooveAnalyze.ts`, `lib/groove.ts`, `lib/drums.ts`, `components/GrooveRecorder.tsx`)
+- **Hits.** Same spectral flux, new picking. A peak must stand clear of the local median (so a trilling whistle, a ringing bell or steady noise is not chopped up) plus a margin measured against what the solid hits share, not against the single loudest bang. Refinement on the samples finds where the level first climbs clear of what was sounding. Strokes within 55 ms (50 ms before) of a stronger one are ONE hit: the beat is the main stroke, the slice starts at the first (flams, drummers not quite together). A much weaker blip up to 75 ms behind a strong hit is its echo and stays in that hit's slice. Nothing is found in hiss or hum; the first and last frame can no longer fake a hit. `detectOnsets` now also returns `starts` and `levels`.
+- **Tempo.** Was: the general-purpose beat detector first (whole BPM only), own estimate as fallback, and the own estimate favoured the fastest grid (a line at 80 with sixteenth cowbells read as 160; straight sixteenths could read as a dotted pulse). Now the hits decide: the coarsest grid that holds nearly all of them, polished by a straight-line fit (within about 0.1 to 0.3 BPM on a jittered line), then how many grid steps make a beat from how the accents repeat. The count-in tempo settles 80 against 160 (strong pull); the score tempo is a weak pull; with neither, the slower of the two is taken. Triplet lines are recognised as triplets. `web-audio-beat-detector` is only asked when the hits make no regular grid (confidence under 0.5). The review screen has **½×** and **2×** (the loop stays the same stretch of the recording).
+- **Downbeat.** After a count-in: the first solid hit in a window around its end (a ghost note just before is skipped; the speaker's delay is added). Without one: the hit whose place in the bar is hit hardest in every bar.
+- **Slices.** Each slice now starts 11 ms before its hit (3 ms guard + 8 ms fade) and runs 8 ms into the next; neighbours cross-fade. At its own tempo the played loop equals the recording (unit test: within 0.02 of full scale, no jump larger than the recording's own). The slice is started early by its lead-in (`Slice.pre`), so the stroke itself is on the beat; when it is too late for the lead-in it is skipped rather than delaying the stroke. The last hit of the loop is cut by the first hit coming round again. A hit just before the bar line (up to 35% of a sixteenth, 70 ms at most) is the next downbeat played early and is left out. Grooves saved by the earlier build are re-cut when loaded (`upgradeGroove`, `Groove.v`).
+- **Rate.** Was: within 8% of the recorded tempo the hits were sped up or slowed, at 8.1% they snapped back (a speed trainer made the drums jump in pitch). Now it eases back to natural speed between 8% and 16%.
+- **Also.** `Groove.gain` brings a quiet recording up to the kit's level; a note when the microphone was overloaded or barely moved; **Hits found: Fewer / More**; "Hear the loop" keeps playing and follows tempo, downbeat, bars and timing while they are changed; stopping playback fades the drums over 12 ms instead of cutting them.
+- **Tests.** `tests/drumLoop.ts` `junkanooLoop`: goatskin bass and lead drums, two cowbells, a pea whistle, each player with his own timing error, flams, room reflections, room noise, microphone overload. `tests/unit/drumLine.test.ts` (21 tests) and `tests/e2e/groove-line.spec.ts` (a quiet line at 80 BPM through the fake microphone).
+
+### 2. Starter kit sound (`lib/kitSynth.ts`, `lib/drums.ts`, `components/KitEditor.tsx`, `components/useGroovePreview.ts`)
+- The sounds are computed sample by sample instead of built from oscillator nodes. Goatskin drums: membrane modes (1, 1.59, 2.14, ...) whose pitch falls as the skin relaxes, a barrel resonating under them, a slap, a little overdrive. Cowbells: eight inharmonic steel partials, the second beating against a twin, a metal tick, on some hits the clapper touching twice; lower than a drum-kit cowbell, the two a fourth apart. Whistle: a tone that scoops up and trills, a second chamber slightly sharp, breath.
+- Three strengths (an accent is brighter and bends more, not only louder) and three takes of each; a hit is one buffer and one gain, never the same take twice running, with a touch of pitch and loudness difference. Timing is left exact. Sounds are rendered before the first bar. The drum channel has a limiter.
+- Step editor: a tap sounds its step; the pattern loops until stopped, shows where it is, and takes edits and tempo changes without starting over.
+- The patterns and the "not a traditional rhythm" label are unchanged.
+- I could not listen. What was checked is measurable: pitch, decay, attack time, brightness by strength, inharmonic partials, trill rate, differences between takes (`tests/unit/kitSynth.test.ts`). The three starters rendered to WAV sit in the scratchpad of this session only.
+
+### 3. Pitch check (`lib/pitch.ts`, `lib/pitchMic.ts`, `components/PitchPanel.tsx`)
+- **Listening length** follows the part's lowest note (six periods, at least 40 ms): 2048 samples for a trumpet, 4096 for trombone and baritone, 8192 for a sousaphone. Was 4096 for everyone. Read every 20 ms (was 30).
+- **Octave.** Finding: on steady brass-like tones the detector (McLeod) does NOT go an octave out even with the fundamental filtered away; it does when the odd harmonics carry under about 5% of the energy (measured). `resolveOctave` covers that case: when the pitch heard is an octave from the written note, energy on the odd harmonics of the written note (3% or more) means the note is in the written octave; a note really played an octave out has none there and stays wrong.
+- **Room.** The fixed loudness threshold is replaced by `NoiseGate`: above twice the unpitched noise in the room, and no more than 20 dB under the player's own recent level.
+- **Delay.** `LagTracker` compares the moment each new written pitch is first heard with the moment it was due, and uses the early side of the last fifteen as the extra delay (limits -0.12 s to +0.4 s). Simulated 200 ms late (Bluetooth): without it right notes turn red, with it every note is green on the second time through. Kept per device (localStorage `br-pitch-lag`), shown in the drawer with "Forget it". This replaces the "play a note, tap when you hear it" calibration idea: it needs no screen and no skill, and it also follows a player who sits behind the beat.
+- **Judging.** When at least 35% of a note's clear readings sit within 80 cents of the written note it is judged on those (the neighbour's tail or a splatter no longer turns a right note red); a short note needs one or two clear readings, not three; clarity 0.85 for judging, 0.9 for the "Hearing ..." readout.
+- **Tests.** `tests/unit/pitchBrass.test.ts` (17), `tests/e2e/pitch-low.spec.ts` (a sousaphone Bb1 with almost no fundamental).
+
+### 4. Practice flow (`components/PracticeSheet.tsx`, `app/score/[id]/page.tsx`, `components/DrumsPanel.tsx`, `components/KitEditor.tsx`)
+Looked at screenshots at 390x844 and 844x390 before and after.
+- Order: Loop, Drums, Pitch check, Record, Band, Fingerings, Range. One tool open at a time. Each header says what its tool is doing; chips carry a dot when their tool is on.
+- Drums shows only the groove picker until a groove is chosen.
+- Step editor: was a 4x4 block of steps per instrument (you could not see the bass drum against the cowbell); now one grid, an instrument per line and a step per column, scrolling sideways, with the instrument names staying put and the play controls above it. In landscape nearly a whole bar of all five instruments fits.
+
+### 5. Robustness (`lib/storage.ts`, `lib/takes.ts`, `lib/library.ts`, `lib/grooveStore.ts`, `public/pcm-recorder-worklet.js`)
+- A full device is told apart from blocked storage and said in plain words. A groove that cannot be saved stays on screen. A new take makes room by dropping up to three of the oldest takes of its own score. Practice settings never throw: one toast. `navigator.storage.persist()` is asked for after the first save.
+- The recorder's worklet processor used to stay alive after every recording; it is now told to stop.
+- Groove files over 20 MB are refused before being read.
+- e2e (`tests/e2e/robust.spec.ts`): writes refused for grooves, scores and takes; leaving the score through the in-app link with drums, pitch check and a pattern preview running leaves no open audio context, no live microphone track, no extra timer and no scheduler.
+- A test race in `drums-play` (the bar-jump check could read a hit handed over before the tap landed; noted as flaky in fix pass 2) is fixed in the test.
+
+### Decisions worth knowing
+- Tempo without a count-in in the ambiguous zone (75 to 82 against 150 to 165) defaults to the slower reading. If the band's lines are usually up there, change the centre of `usual()` in `estimateTempo`.
+- `KIT_TAKES` is 3 and the kit cache is per audio context (about 1 MB per instrument fully warmed).
+- Commit trailers follow the project's existing ones, as the task asked.
+
+### Still untested
+- Everything acoustic: real goatskin drums, cowbells and whistles, real rooms, a phone microphone's own overload and automatic gain; how the synthesized kit sounds (nobody has listened); real brass through a real phone; the octave check, the room gate and the learned delay on real audio (unit-simulated only); Bluetooth headphones.
+- iPhone Safari throughout: the audio worklet stop message, `storage.persist`, a really full device (writes were refused by a patched `put`), the sideways-scrolling grid under a finger, long-press.
+- The limiter on the drum channel and the 12 ms fade were not measured in a browser (the logic around them is).
+- Tempo analysis on lines that drift a lot, in 3/4 or 6/8, or with a swing between straight and triplet.
+

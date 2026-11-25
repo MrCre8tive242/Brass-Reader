@@ -119,7 +119,7 @@ export default function KitEditor({ getCtx, existing, from, onSave, onCancel }: 
         )}
       </div>
       <div className="prow" role="group" aria-label="What a tap puts on a step" data-testid="brush">
-        <span className="plabel">A tap makes a step</span>
+        <span className="plabel">A tap is</span>
         {([[1, 'Soft'], [2, 'Normal'], [3, 'Accent']] as const).map(([v, w]) => (
           <button key={v} type="button" className={`btn sm brush${brush === v ? ' on' : ''}`} aria-pressed={brush === v} onClick={() => setBrush(v)}>
             <span className={`swatch v${v}`} aria-hidden /> {w}
@@ -128,12 +128,12 @@ export default function KitEditor({ getCtx, existing, from, onSave, onCancel }: 
       </div>
       <p className="muted small legend" data-testid="legend">
         <span><span className="swatch v0" aria-hidden /> empty</span> <span><span className="swatch v1" aria-hidden /> soft</span> <span><span className="swatch v2" aria-hidden /> normal</span> <span><span className="swatch v3" aria-hidden /> accent</span>.
-        {' '}Tap a step to fill it, tap again to clear it, hold for an accent. The numbers are the beats; swipe sideways for the rest of the bar.
+        {' '}Tap a step to fill it, again to clear it; hold for an accent. Swipe sideways for the rest of the bar.
       </p>
       <div className="prow sticky-bar top">
         <span className="plabel">Tempo</span>
         <NumField value={bpm} label="Preview tempo BPM" min={40} max={240} onCommit={setBpm} />
-        <button type="button" className="btn" onClick={() => (playing ? preview.stop() : play())} aria-label={playing ? 'Stop the pattern' : 'Hear the pattern'}>{playing ? 'Stop' : 'Hear the pattern'}</button>
+        <button type="button" className="btn" onClick={() => (playing ? preview.stop() : play())} aria-label={playing ? 'Stop the pattern' : 'Hear the pattern'}>{playing ? 'Stop' : 'Play'}</button>
         <button type="button" className="btn ghost sm" onClick={() => setPattern((p) => emptyPattern(p.steps, p.bars))}>Clear all</button>
       </div>
       {Array.from({ length: pattern.bars }, (_, b) => (

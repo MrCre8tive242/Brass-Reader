@@ -64,11 +64,11 @@ test('a quiet, human drum line: tempo to the count-in octave, half/double, more/
   await expect(bars()).toHaveText('2');
 
   // a finer or coarser ear
-  await page.getByRole('button', { name: 'Find fewer hits' }).click();
-  await page.getByRole('button', { name: 'Find fewer hits' }).click();
+  // (how many soft hits there are to lose depends on where in its eight bars the "band" was caught: go all the way)
+  for (let i = 0; i < 4; i++) await page.getByRole('button', { name: 'Find fewer hits' }).click();
+  await expect(page.getByRole('button', { name: 'Find fewer hits' })).toBeDisabled();
   await expect.poll(hits).toBeLessThan(n0);
-  await page.getByRole('button', { name: 'Find more hits' }).click();
-  await page.getByRole('button', { name: 'Find more hits' }).click();
+  for (let i = 0; i < 4; i++) await page.getByRole('button', { name: 'Find more hits' }).click();
   await expect.poll(hits).toBe(n0);
 
   await page.getByRole('button', { name: 'Hear the loop' }).click();
