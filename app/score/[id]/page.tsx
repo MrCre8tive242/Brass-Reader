@@ -16,6 +16,7 @@ import { songPartsOf, fitBars, mergeScores, mergeTimelines, type SongPart } from
 import { DEFAULT_MIX, normalizeMix, type MixState } from '@/lib/mixer';
 import BandPanel from '@/components/BandPanel';
 import PitchPanel from '@/components/PitchPanel';
+import RecordPanel from '@/components/RecordPanel';
 import { MicSession } from '@/lib/micSession';
 import { type NoteResult } from '@/lib/pitch';
 import { offsetInBar } from '@/lib/timeline';
@@ -452,6 +453,9 @@ export default function ScorePage() {
             onResults={setPitchResults} onLoopBar={(m) => pickLoop(m, m)}
             partName={INSTRUMENTS[target].name}
           />
+        </Section>
+        <Section id="record" title="Record yourself">
+          <RecordPanel scoreId={id} title={score.title} getPlayer={getPlayer} session={mic} playing={playing} onTempo={setBpm} />
         </Section>
         <Section id="loop" title="Loop and speed trainer" open>
           <LoopPanel measureCount={measureCount} loop={normalizeLoop(loop, measureCount)} draft={loopDraft} trainer={trainer} onDraft={setLoopDraft} onLoop={changeLoop} onTrainer={changeTrainer} />

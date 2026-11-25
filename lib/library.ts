@@ -3,6 +3,7 @@ import type { InstrumentId } from './instruments';
 import type { LoopRange, Trainer } from './loop';
 import type { SongPart } from './song';
 import type { MixState } from './mixer';
+import { deleteTakesOf } from './takes';
 
 export interface SavedScore {
   id: string;
@@ -49,6 +50,8 @@ export async function getScore(id: string): Promise<SavedScore | undefined> {
 
 export async function deleteScore(id: string): Promise<void> {
   await del(PREFIX + id);
+  // recordings belong to the score
+  await deleteTakesOf(id).catch(() => {});
 }
 
 export async function listScores(): Promise<SavedScore[]> {
