@@ -141,3 +141,26 @@ test('"Written for" is detected from the clef on upload and can be overridden', 
   await page.waitForURL(/\/score\//);
   await expect(page.getByLabel('Written for')).toHaveValue('trumpet');
 });
+
+test('irregular bars are padded, flagged in the UI, and the cursor stays inside the bar (empty bar fixture)', async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 900 });
+  await openScore(page, 'qa-rests.musicxml', 'rests1');
+  const warn = page.getByTestId('bar-warnings');
+  await expect(warn).toContainText('Bar 4 may be misread');
+  const count = Number((await bar(page).textContent())!.match(/\/ (\d+)/)![1]);
+  for (let i = 1; i <= count; i++) {
+    const r = await page.evaluate(() => {
+      const h = document.querySelector('[data-testid="bar-highlight"]')!.getBoundingClientRect();
+      const c = document.querySelector('img[id^="cursorImg"]')!.getBoundingClientRect();
+      return { dl: c.left - h.left, dr: h.right - c.right };
+    });
+    expect(r.dl, `bar ${i}`).toBeGreaterThanOrEqual(-3);
+    expect(r.dr, `bar ${i}`).toBeGreaterThanOrEqual(-3);
+    if (i < count) await page.getByRole('button', { name: 'Next bar' }).click();
+  }
+});
+
+test('a regular score shows no bar warning', async ({ page }) => {
+  await openScore(page, 'scale.musicxml', 'ok1');
+  await expect(page.getByTestId('bar-warnings')).toHaveCount(0);
+});

@@ -89,3 +89,7 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 .pdfbox { width: 96px; height: 128px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel2); display: grid; place-items: center; text-align: center; font-size: 0.75rem; color: var(--muted); }
 .sel { min-height: 48px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font-size: 1rem; padding: 0 10px; width: 100%; }
 .picker-one { display: flex; flex-direction: column; gap: 4px; }
+
+.warn { margin: 8px 0; padding: 10px 12px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); font-size: 0.9rem; }
+.warn ul { margin: 4px 0 0; padding-left: 18px; }
+.picker-hint { margin: 0 0 6px; }

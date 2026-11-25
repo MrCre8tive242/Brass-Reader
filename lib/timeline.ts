@@ -97,7 +97,7 @@ function parseEndingNumbers(s: string | null): number[] {
   return out;
 }
 
-function readFlow(parts: XEl[]): { flow: MeasureFlow[]; labels: string[]; barTotal: number } {
+export function readFlow(parts: XEl[]): { flow: MeasureFlow[]; labels: string[]; barTotal: number } {
   const count = Math.max(0, ...parts.map((p) => kids(p, 'measure').length));
   const flow: MeasureFlow[] = Array.from({ length: count }, () => ({}));
   const nums: (string | null)[] = Array(count).fill(null);

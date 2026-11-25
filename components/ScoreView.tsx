@@ -184,7 +184,10 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, o
             followCursor: false,
             drawingParameters: 'compact',
             cursorsOptions: [{ type: 0, color: '#ff7a00', alpha: 0.75, follow: false }],
+            // every written bar must stay visible (bar counter, highlight, cursor): no merged multi-bar rests
+            autoGenerateMultipleRestMeasuresFromRestMeasures: false,
           });
+          osmdRef.current.EngravingRules.RenderMultipleRestMeasures = false;
         }
         await renderAll(true);
         if (cancelled) return;

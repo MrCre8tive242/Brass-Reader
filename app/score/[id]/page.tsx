@@ -12,6 +12,7 @@ import { toConcert, fromConcert } from '@/lib/transpose';
 import { buildTimeline } from '@/lib/timeline';
 import { toMidi } from '@/lib/midi';
 import { detectSourceInstrument } from '@/lib/musicxml';
+import { analyseAndRepair } from '@/lib/repair';
 import { Player } from '@/lib/player';
 
 function lsGet(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
@@ -51,16 +52,19 @@ export default function ScorePage() {
     return () => { alive = false; };
   }, [id]);
 
+  // bars that do not add up to the time signature: padded with rests (so cursor and audio agree) and flagged
+  const repair = useMemo(() => (score ? analyseAndRepair(score.sourceXml) : null), [score]);
+
   const derived = useMemo(() => {
-    if (!score) return null;
+    if (!score || !repair) return null;
     try {
-      const concert = toConcert(score.sourceXml, source);
+      const concert = toConcert(repair.xml, source);
       const xml = fromConcert(concert, target);
       return { xml, tl: buildTimeline(xml), err: null as string | null };
     } catch (e) {
       return { xml: '', tl: null, err: (e as Error).message };
     }
-  }, [score, source, target]);
+  }, [score, repair, source, target]);
 
   // player lifecycle
   useEffect(() => {
@@ -148,6 +152,15 @@ export default function ScorePage() {
           {engine === 'loading' ? 'Loading sounds…' : engine === 'soundfont' ? `Sound: ${INSTRUMENTS[target].name} samples` : 'Sound: simple synth (samples unavailable offline)'}
         </p>
         {(error || derived?.err) && <p className="error" role="alert">{error || derived?.err}</p>}
+        {repair && repair.warnings.length > 0 && (
+          <div className="warn" role="status" data-testid="bar-warnings">
+            <strong>Check these bars against your sheet:</strong>
+            <ul>
+              {repair.warnings.slice(0, 6).map((w) => <li key={w}>{w}</li>)}
+              {repair.warnings.length > 6 && <li>and {repair.warnings.length - 6} more.</li>}
+            </ul>
+          </div>
+        )}
         {derived && !derived.err && (
           <ScoreView
             ref={view}
