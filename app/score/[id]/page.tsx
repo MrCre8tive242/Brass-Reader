@@ -7,6 +7,7 @@ import Transport from '@/components/Transport';
 import InstrumentPicker from '@/components/InstrumentPicker';
 import Downloads from '@/components/Downloads';
 import { getScore, updateScore, type SavedScore } from '@/lib/library';
+import { onStorageProblem } from '@/lib/storage';
 import { INSTRUMENTS, isInstrumentId, type InstrumentId } from '@/lib/instruments';
 import { toConcert, fromConcert } from '@/lib/transpose';
 import { buildTimeline } from '@/lib/timeline';
@@ -270,6 +271,8 @@ export default function ScorePage() {
     toastTimer.current = setTimeout(() => setToast(null), 4500);
   }, []);
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+  // a setting that could not be stored (the device is full): say so once, keep going
+  useEffect(() => onStorageProblem(say), [say]);
   useEffect(() => { setLoopHintSeen(lsGet('brass-reader:loop-hint') === '1'); }, []);
   const pickLoop = useCallback((from: number, to: number) => {
     const n = normalizeLoop({ from, to }, measureCountRef.current);
@@ -499,10 +502,19 @@ export default function ScorePage() {
     );
   }
   const many = parts.length > 1;
+  // what each practice tool is doing right now: shown on its folded header and as a dot on its shortcut
+  const drumsLive = !!groove && drums.on;
+  const fingerWord = target === 'trombone' ? 'Slide' : 'Fingering';
+  const loopNow = normalizeLoop(loop, measureCount);
+  const loopStatus = loopNow
+    ? `${loopNow.from === loopNow.to ? `Bar ${loopNow.from}` : `Bars ${loopNow.from}–${loopNow.to}`}${trainer?.enabled ? ` · ${trainer.start}→${trainer.target} BPM` : ''}`
+    : 'Off';
+  const drumStatusLine = groove ? (drums.on ? groove.name.replace(/^Starter /, '') : `${groove.name.replace(/^Starter /, '')} · muted`) : 'None';
+  // in the order a rehearsal uses them
   const practiceTabs = [
-    { id: 'loop', label: 'Loop' }, { id: 'band', label: 'Band' }, { id: 'range', label: 'Range' },
-    { id: 'fingerings', label: target === 'trombone' ? 'Slide' : 'Fingering' }, { id: 'pitch', label: 'Pitch' },
-    { id: 'record', label: 'Record' }, { id: 'drums', label: 'Drums' },
+    { id: 'loop', label: 'Loop', on: !!loopNow }, { id: 'drums', label: 'Drums', on: drumsLive }, { id: 'pitch', label: 'Pitch', on: pitchOn },
+    { id: 'record', label: 'Record', on: recBusy }, { id: 'band', label: 'Band' },
+    { id: 'fingerings', label: fingerWord, on: fingerings }, { id: 'range', label: 'Range', on: rangeOn && rangeIssues.length > 0 },
   ];
   const loopShown = normalizeLoop(loop, measureCount);
 
@@ -596,8 +608,22 @@ export default function ScorePage() {
         />
       </main>
       <PracticeSheet open={practiceOpen} onClose={() => setPracticeOpen(false)} tabs={practiceTabs}>
-        <Section id="loop" title="Loop and speed trainer" open>
+        <Section id="loop" title="Loop and speed trainer" open status={loopStatus} live={!!loopNow}>
           <LoopPanel measureCount={measureCount} loop={normalizeLoop(loop, measureCount)} draft={loopDraft} trainer={trainer} onDraft={setLoopDraft} onLoop={changeLoop} onTrainer={changeTrainer} />
+        </Section>
+        <Section id="drums" title="Drums" status={drumStatusLine} live={drumsLive}>
+          <DrumsPanel settings={drums} grooves={allGrooves} status={drumStatus} onChange={changeDrums} onOpenStudio={() => setStudioOpen(true)} />
+        </Section>
+        <Section id="pitch" title="Pitch check" status={pitchOn ? (playing ? 'Listening' : 'On') : 'Off'} live={pitchOn}>
+          <PitchPanel
+            getPlayer={getPlayer} session={mic} notes={myNotes} playing={playing} enabled={pitchOn}
+            onEnabled={(v) => { setPitchOn(v); if (!v) setPitchResults([]); }}
+            onResults={setPitchResults} onLoopBar={(m) => pickLoop(m, m)}
+            partName={INSTRUMENTS[target].name} writtenToConcert={INSTRUMENTS[target].writtenToConcert} drawerOpen={practiceOpen}
+          />
+        </Section>
+        <Section id="record" title="Record yourself" status={recBusy ? 'Armed' : undefined} live={recBusy}>
+          <RecordPanel scoreId={id} title={score.title} getPlayer={getPlayer} session={mic} playing={playing} onTempo={setBpm} onBusy={setRecBusy} />
         </Section>
         <Section id="band" title={parts.length > 1 ? `Band (${parts.length} parts)` : 'Band'}>
           <BandPanel
@@ -605,7 +631,18 @@ export default function ScorePage() {
             onMix={onMix} onMy={(i) => onPart(String(i))} onFull={onFull} onInstrument={onPartInstrument}
           />
         </Section>
-        <Section id="range" title={rangeIssues.length ? `Range (${rangeIssues.length} out of range)` : 'Range'}>
+        <Section id="fingerings" title={INSTRUMENTS[target].id === 'trombone' ? 'Slide positions' : 'Fingerings'} status={fingerings ? 'Shown' : undefined} live={fingerings}>
+          <label className="chk wide">
+            <input type="checkbox" checked={fingerings} onChange={(e) => changeFingerings(e.target.checked)} aria-label="Show fingerings" /> Show {target === 'trombone' ? 'slide positions' : 'fingerings'} under the notes
+          </label>
+          <p className="muted small" data-testid="finger-help">
+            {target === 'trombone'
+              ? 'Slide positions 1 to 7 (1 = in). The usual position is shown; tap one for another way to play the note.'
+              : `Valves 1, 2, 3 (0 = open). The usual fingering is shown; tap one for another way to play the note. ${target === 'trumpet' || target === 'mellophone' ? 'Looked up by the written pitch.' : 'Looked up by the concert pitch.'}`}
+            {' '}A dash means the note is outside the chart.
+          </p>
+        </Section>
+        <Section id="range" title={rangeIssues.length ? `Range (${rangeIssues.length} out of range)` : 'Range'} status={rangeOn ? 'Shown' : undefined} live={rangeOn && rangeIssues.length > 0}>
           <label className="chk wide">
             <input type="checkbox" checked={rangeOn} onChange={(e) => changeRangeOn(e.target.checked)} aria-label="Highlight notes out of range" /> Highlight notes out of range
           </label>
@@ -629,31 +666,6 @@ export default function ScorePage() {
               <button type="button" className="btn sm ghost" onClick={clearShifts}>Undo octave moves</button>
             </div>
           )}
-        </Section>
-        <Section id="fingerings" title={INSTRUMENTS[target].id === 'trombone' ? 'Slide positions' : 'Fingerings'}>
-          <label className="chk wide">
-            <input type="checkbox" checked={fingerings} onChange={(e) => changeFingerings(e.target.checked)} aria-label="Show fingerings" /> Show {target === 'trombone' ? 'slide positions' : 'fingerings'} under the notes
-          </label>
-          <p className="muted small" data-testid="finger-help">
-            {target === 'trombone'
-              ? 'Slide positions 1 to 7 (1 = in). The usual position is shown; tap one for another way to play the note.'
-              : `Valves 1, 2, 3 (0 = open). The usual fingering is shown; tap one for another way to play the note. ${target === 'trumpet' || target === 'mellophone' ? 'Looked up by the written pitch.' : 'Looked up by the concert pitch.'}`}
-            {' '}A dash means the note is outside the chart.
-          </p>
-        </Section>
-        <Section id="pitch" title="Pitch check (microphone)">
-          <PitchPanel
-            getPlayer={getPlayer} session={mic} notes={myNotes} playing={playing} enabled={pitchOn}
-            onEnabled={(v) => { setPitchOn(v); if (!v) setPitchResults([]); }}
-            onResults={setPitchResults} onLoopBar={(m) => pickLoop(m, m)}
-            partName={INSTRUMENTS[target].name} writtenToConcert={INSTRUMENTS[target].writtenToConcert} drawerOpen={practiceOpen}
-          />
-        </Section>
-        <Section id="record" title="Record yourself">
-          <RecordPanel scoreId={id} title={score.title} getPlayer={getPlayer} session={mic} playing={playing} onTempo={setBpm} onBusy={setRecBusy} />
-        </Section>
-        <Section id="drums" title="Drums">
-          <DrumsPanel settings={drums} grooves={allGrooves} status={drumStatus} onChange={changeDrums} onOpenStudio={() => setStudioOpen(true)} />
         </Section>
       </PracticeSheet>
       {studioOpen && <GrooveStudio getCtx={() => player.current?.context ?? null} clickBpm={bpm} onClose={() => setStudioOpen(false)} onChanged={refreshGrooves} />}

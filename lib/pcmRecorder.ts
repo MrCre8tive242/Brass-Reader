@@ -48,7 +48,9 @@ export async function startPcmRecorder(ctx: AudioContext, onFull?: () => void): 
     if (closed) return;
     closed = true;
     try { source.disconnect(); node.disconnect(); sink.disconnect(); } catch { /* ignore */ }
-    if ('port' in node) (node as AudioWorkletNode).port.onmessage = null;
+    if ('port' in node) { const port = (node as AudioWorkletNode).port; port.onmessage = null; try { port.postMessage('stop'); port.close(); } catch { /* ignore */ } }
+    else (node as ScriptProcessorNode).onaudioprocess = null;
+    chunks.length = 0;
     for (const t of stream.getTracks()) t.stop();
   };
   return {
@@ -61,10 +63,10 @@ export async function startPcmRecorder(ctx: AudioContext, onFull?: () => void): 
     elapsed: () => frames / ctx.sampleRate,
     async stop() {
       await new Promise((r) => setTimeout(r, 60)); // let the last blocks arrive
-      close();
       const samples = new Float32Array(frames);
       let o = 0;
       for (const c of chunks) { samples.set(c, o); o += c.length; }
+      close();
       return { samples, rate: ctx.sampleRate };
     },
     cancel: close,

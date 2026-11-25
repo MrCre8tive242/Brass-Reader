@@ -28,32 +28,39 @@ export default function DrumsPanel({ settings, grooves, status, onChange, onOpen
       </label>
       {g?.starter && <p className="starter-note" data-testid="drums-starter-label">{STARTER_LABEL}</p>}
       {status && <p className="muted small" role="status" data-testid="drums-status">{status}</p>}
-      <label className="chk wide">
-        <input type="checkbox" checked={settings.on} onChange={(e) => onChange({ on: e.target.checked })} aria-label="Drums on" /> Drums on
-      </label>
-      <div className="prow">
-        <label className="plabel" htmlFor="drumvol">Drums volume</label>
-        <input id="drumvol" type="range" min={0} max={100} value={Math.round(settings.volume * 100)} className="grow" aria-label="Drums volume" onChange={(e) => onChange({ volume: Number(e.target.value) / 100 })} />
-      </div>
-      {g?.kind === 'kit' && g.pattern?.steps === 16 && (
-        <div className="prow" role="group" aria-label="Drum feel">
-          <span className="plabel">Feel</span>
-          {(['straight', 'triplet'] as Feel[]).map((f) => (
-            <button key={f} type="button" className={`btn sm${feelFor(settings, g) === f ? ' on' : ''}`} aria-pressed={feelFor(settings, g) === f} onClick={() => onChange({ feel: f })}>{f === 'straight' ? 'Straight' : 'Triplet'}</button>
-          ))}
+      {g ? (
+        <>
+        <label className="chk wide">
+          <input type="checkbox" checked={settings.on} onChange={(e) => onChange({ on: e.target.checked })} aria-label="Drums on" /> Drums on
+        </label>
+        <div className="prow">
+          <label className="plabel" htmlFor="drumvol">Drums volume</label>
+          <input id="drumvol" type="range" min={0} max={100} value={Math.round(settings.volume * 100)} className="grow" aria-label="Drums volume" onChange={(e) => onChange({ volume: Number(e.target.value) / 100 })} />
         </div>
+        {g?.kind === 'kit' && g.pattern?.steps === 16 && (
+          <div className="prow" role="group" aria-label="Drum feel">
+            <span className="plabel">Feel</span>
+            {(['straight', 'triplet'] as Feel[]).map((f) => (
+              <button key={f} type="button" className={`btn sm${feelFor(settings, g) === f ? ' on' : ''}`} aria-pressed={feelFor(settings, g) === f} onClick={() => onChange({ feel: f })}>{f === 'straight' ? 'Straight' : 'Triplet'}</button>
+            ))}
+          </div>
+        )}
+        {g?.kind === 'recorded' && <p className="muted small">Recorded at {Math.round((g.bpm ?? 0) * 10) / 10} BPM. At other tempos each hit is played again on the beat grid, so the sound stays real.</p>}
+        <label className="chk wide">
+          <input type="checkbox" checked={settings.inTakes} onChange={(e) => onChange({ inTakes: e.target.checked })} aria-label="Drums while recording" /> Keep drums while recording
+        </label>
+        <label className="chk wide">
+          <input type="checkbox" checked={settings.inMidi} onChange={(e) => onChange({ inMidi: e.target.checked })} aria-label="Drum track in MIDI" /> Add a drum track to the MIDI download
+        </label>
+        </>
+      ) : (
+        <p className="muted small" data-testid="drums-none">Pick a groove to play along with: your own drummers, recorded in Grooves, or a starter pattern. It starts on beat one of bar one and follows the tempo and the loop.</p>
       )}
-      {g?.kind === 'recorded' && <p className="muted small">Recorded at {Math.round((g.bpm ?? 0) * 10) / 10} BPM. At other tempos each hit is played again on the beat grid, so the sound stays real.</p>}
-      <label className="chk wide">
-        <input type="checkbox" checked={settings.inTakes} onChange={(e) => onChange({ inTakes: e.target.checked })} aria-label="Drums while recording" /> Keep drums while recording
-      </label>
-      <label className="chk wide">
-        <input type="checkbox" checked={settings.inMidi} onChange={(e) => onChange({ inMidi: e.target.checked })} aria-label="Drum track in MIDI" /> Add a drum track to the MIDI download
-      </label>
       <div className="prow">
-        <button type="button" className="btn sm primary" data-testid="open-studio" onClick={onOpenStudio}>Grooves…</button>
+        <button type="button" className={`btn sm${g ? '' : ' primary'}`} data-testid="open-studio" onClick={onOpenStudio}>Grooves…</button>
+        <span className="muted small">Record your drummers, edit patterns, share.</span>
       </div>
-      <p className="muted small">The drums start on beat one of bar one (after the count-in) and follow the tempo, seeking and the loop. They are never part of the pitch check or Mute my part.</p>
+      {g && <p className="muted small">The drums follow the tempo, seeking and the loop. They are never part of the pitch check or Mute my part.</p>}
     </div>
   );
 }

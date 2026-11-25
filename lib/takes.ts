@@ -1,4 +1,5 @@
 import { get, set, del, keys, getMany } from 'idb-keyval';
+import { asStorageError, isQuotaError, requestPersistence } from './storage';
 
 /** A recording of the player, kept per score. */
 export interface Take {
@@ -48,9 +49,20 @@ export async function listTakes(scoreId: string): Promise<Take[]> {
   return all.sort((a, b) => b.createdAt - a.createdAt);
 }
 
-/** Save a take and drop the oldest beyond the cap. Returns the takes that remain, newest first. */
+/**
+ * Save a take and drop the oldest beyond the cap. Returns the takes that remain, newest first.
+ * When there is no room, the oldest takes of this score make way for the new one (up to three of them);
+ * if that is not enough a StorageError says so, and nothing else is touched.
+ */
 export async function saveTake(t: Take, cap = MAX_TAKES): Promise<Take[]> {
-  await set(takeKey(t.scoreId, t.id), t);
+  for (let freed = 0; ; freed++) {
+    try { await set(takeKey(t.scoreId, t.id), t); break; } catch (e) {
+      const old = isQuotaError(e) && freed < 3 ? (await listTakes(t.scoreId).catch(() => [] as Take[])).filter((x) => x.id !== t.id) : [];
+      if (!old.length) throw asStorageError(e, 'the take');
+      await del(takeKey(t.scoreId, old[old.length - 1].id)).catch(() => {});
+    }
+  }
+  requestPersistence();
   const all = await listTakes(t.scoreId);
   for (const id of takesToDelete(all, cap)) await del(takeKey(t.scoreId, id));
   return listTakes(t.scoreId);

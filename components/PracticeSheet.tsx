@@ -7,7 +7,7 @@ interface Props {
   open: boolean;
   onClose: () => void;
   /** Section shortcuts shown above the list (the Loop section first). */
-  tabs?: { id: string; label: string }[];
+  tabs?: { id: string; label: string; /** The tool is doing something right now (a loop is set, the drums are on, ...). */ on?: boolean }[];
   children: ReactNode;
 }
 
@@ -35,6 +35,7 @@ export default function PracticeSheet({ open, onClose, tabs, children }: Props) 
   const jump = (id: string) => {
     const sec = document.querySelector<HTMLDetailsElement>(`[data-testid="sec-${id}"]`);
     if (!sec) return;
+    closeOthers(sec);
     sec.open = true;
     sec.scrollIntoView({ block: 'start', behavior: 'smooth' });
     sec.querySelector<HTMLElement>('summary')?.focus({ preventScroll: true });
@@ -50,7 +51,9 @@ export default function PracticeSheet({ open, onClose, tabs, children }: Props) 
       {tabs && tabs.length > 0 && (
         <nav className="sheet-nav" aria-label="Practice sections">
           {tabs.map((t) => (
-            <a key={t.id} href={`#sec-${t.id}`} className="chip" onClick={(e) => { e.preventDefault(); jump(t.id); }}>{t.label}</a>
+            <a key={t.id} href={`#sec-${t.id}`} className={`chip${t.on ? ' live' : ''}`} onClick={(e) => { e.preventDefault(); jump(t.id); }}>
+              {t.label}{t.on && <span className="sr-only"> (on)</span>}
+            </a>
           ))}
         </nav>
       )}
@@ -59,10 +62,22 @@ export default function PracticeSheet({ open, onClose, tabs, children }: Props) 
   );
 }
 
-export function Section({ id, title, children, open }: { id: string; title: string; children: ReactNode; open?: boolean }) {
+/** One tool is open at a time: opening a section folds the others away (their headers still say what they are doing). */
+function closeOthers(keep: HTMLDetailsElement) {
+  keep.closest('.sheet-body')?.querySelectorAll<HTMLDetailsElement>('details.psec[open]').forEach((d) => { if (d !== keep) d.open = false; });
+}
+
+/**
+ * A tool of the practice drawer. `status` is a few words on the header saying what the tool is doing now
+ * ("bars 3 to 6", "Starter A", "on"), so the folded drawer reads as one panel; `live` lights it up.
+ */
+export function Section({ id, title, children, open, status, live }: { id: string; title: string; children: ReactNode; open?: boolean; status?: string; live?: boolean }) {
   return (
-    <details className="psec" data-testid={`sec-${id}`} open={open}>
-      <summary>{title}</summary>
+    <details className={`psec${live ? ' live' : ''}`} data-testid={`sec-${id}`} open={open}>
+      <summary onClick={(e) => { const d = e.currentTarget.parentElement as HTMLDetailsElement; if (!d.open) closeOthers(d); }}>
+        <span className="psec-title">{title}</span>{' '}
+        {status && <span className="psec-status" data-testid={`status-${id}`}>{status}</span>}
+      </summary>
       <div className="psec-body">{children}</div>
     </details>
   );

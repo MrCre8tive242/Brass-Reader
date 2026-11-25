@@ -1,13 +1,16 @@
 import { get, set, del, keys, getMany } from 'idb-keyval';
 import { upgradeGroove, type Groove } from './groove';
+import { asStorageError, requestPersistence } from './storage';
 
 /** A groove as kept in the browser's storage: the record plus (for a recorded one) its audio as a WAV file. */
 export type StoredGroove = Groove & { audio?: Blob };
 
 const PREFIX = 'groove:';
 
+/** Throws a StorageError (with words for the player) when the browser will not store it. */
 export async function saveGroove(g: StoredGroove): Promise<void> {
-  await set(PREFIX + g.id, g);
+  try { await set(PREFIX + g.id, g); } catch (e) { throw asStorageError(e, 'the groove'); }
+  requestPersistence();
 }
 export async function getGroove(id: string): Promise<StoredGroove | undefined> {
   const g = await get<StoredGroove>(PREFIX + id);

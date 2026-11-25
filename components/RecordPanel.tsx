@@ -4,6 +4,7 @@ import type { Player } from '@/lib/player';
 import type { MicSession } from '@/lib/micSession';
 import type { Mic } from '@/lib/pitchMic';
 import { micErrorMessage } from '@/lib/pitch';
+import { storageErrorMessage } from '@/lib/storage';
 import { MAX_TAKES, deleteTake, listTakes, pickRecorderMime, saveTake, takeExtension, type Take } from '@/lib/takes';
 import { newId } from '@/lib/library';
 import { AlertIcon, MicIcon } from './Icons';
@@ -70,7 +71,7 @@ export default function RecordPanel({ scoreId, title, getPlayer, session, playin
       if (durationS < 0.4 || !chunks.length) return;
       const type = rec.mimeType || mime || 'audio/webm';
       void saveTake({ id: newId(), scoreId, createdAt: Date.now(), mime: type, blob: new Blob(chunks, { type }), durationS, ...meta })
-        .then(setTakes).catch(() => setError('Could not save the take (the browser is not letting the app store it).'));
+        .then(setTakes).catch((e) => { setError(storageErrorMessage(e, 'the take')); refresh(); });
     };
     rec.start(250);
     setRecording(true);

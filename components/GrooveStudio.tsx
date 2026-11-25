@@ -4,6 +4,7 @@ import { useModal } from './useModal';
 import { deleteGroove, listGrooves, renameGroove, saveGroove, type StoredGroove } from '@/lib/grooveStore';
 import { STARTER_LABEL, grooveBars, makeGrooveFile, parseGrooveFile, starterGrooves, type KitPattern } from '@/lib/groove';
 import { newId } from '@/lib/library';
+import { storageErrorMessage } from '@/lib/storage';
 import type { Analysis } from '@/lib/grooveAnalyze';
 import { AlertIcon, BackIcon, MicIcon, TrashIcon } from './Icons';
 import { GrooveRecorder, GrooveReview } from './GrooveRecorder';
@@ -49,6 +50,8 @@ function download(data: BlobPart, type: string, name: string) {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
+
+const MAX_GROOVE_FILE = 20 * 1024 * 1024;
 
 const meta = (g: StoredGroove) =>
   g.kind === 'recorded' ? `Recorded · ${Math.round((g.bpm ?? 0) * 10) / 10} BPM · ${g.bars} bar${g.bars === 1 ? '' : 's'} · ${g.slices?.length ?? 0} hits`
@@ -123,6 +126,8 @@ export default function GrooveStudio({ getCtx, clickBpm, onClose, onChanged }: P
   async function importFile(f: File | undefined) {
     if (!f) return;
     setError(null); setNotice(null);
+    // a groove file with 30 seconds of sound is about 4 MB; anything far beyond that is not one
+    if (f.size > MAX_GROOVE_FILE) { setError('That file is too big to be a groove file.'); return; }
     try {
       const { groove, audio } = parseGrooveFile(await f.text());
       const g: StoredGroove = { ...groove, id: newId(), ...(audio ? { audio: new Blob([audio.bytes as BlobPart], { type: audio.mime }) } : {}) };
@@ -141,7 +146,9 @@ export default function GrooveStudio({ getCtx, clickBpm, onClose, onChanged }: P
   }
 
   async function saved(g: StoredGroove) {
-    try { await saveGroove(g); } catch { setError('Could not save the groove (the browser is not letting the app store it).'); return; }
+    // not saved: stay where we are, so the recording or the pattern is not lost
+    try { await saveGroove(g); } catch (e) { setError(storageErrorMessage(e, 'the groove')); root.current?.querySelector('.studio-body')?.scrollTo({ top: 0 }); return; }
+    setError(null);
     buffers.current.delete(g.id);
     refresh(); onChanged();
     setNotice(`Saved “${g.name}”.`);
@@ -168,7 +175,7 @@ export default function GrooveStudio({ getCtx, clickBpm, onClose, onChanged }: P
                       <div className="ginfo">
                         {renaming?.id === g.id
                           ? (
-                            <form className="prow" onSubmit={(e) => { e.preventDefault(); void renameGroove(g.id, renaming.text).then(() => { setRenaming(null); refresh(); onChanged(); }); }}>
+                            <form className="prow" onSubmit={(e) => { e.preventDefault(); void renameGroove(g.id, renaming.text).then(() => { setRenaming(null); refresh(); onChanged(); }).catch((err) => setError(storageErrorMessage(err, 'the new name'))); }}>
                               <input className="txt" value={renaming.text} maxLength={60} autoFocus onChange={(e) => setRenaming({ id: g.id, text: e.target.value })} aria-label="New name" />
                               <button type="submit" className="btn sm primary">Save name</button>
                             </form>

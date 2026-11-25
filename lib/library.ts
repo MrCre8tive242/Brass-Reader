@@ -6,6 +6,7 @@ import type { OctaveShift } from './range';
 import type { MixState } from './mixer';
 import type { DrumSettings } from './drumSettings';
 import { deleteTakesOf } from './takes';
+import { asStorageError, reportStorageProblem, requestPersistence } from './storage';
 
 export interface SavedScore {
   id: string;
@@ -46,8 +47,10 @@ export function newId(): string {
   return `${Date.now().toString(36)}${r}`;
 }
 
+/** Throws a StorageError (with words for the player) when the browser will not store it. */
 export async function saveScore(s: SavedScore): Promise<void> {
-  await set(PREFIX + s.id, s);
+  try { await set(PREFIX + s.id, s); } catch (e) { throw asStorageError(e, 'the score'); }
+  requestPersistence();
 }
 
 export async function getScore(id: string): Promise<SavedScore | undefined> {
@@ -66,7 +69,13 @@ export async function listScores(): Promise<SavedScore[]> {
   return all.sort((a, b) => b.createdAt - a.createdAt);
 }
 
+/**
+ * Change some fields of a saved score (practice settings mostly). Never throws: a setting that cannot be stored
+ * still works until the page is closed, and the player is told once (see `onStorageProblem`).
+ */
 export async function updateScore(id: string, patch: Partial<SavedScore>): Promise<void> {
-  const cur = await getScore(id);
-  if (cur) await saveScore({ ...cur, ...patch, id });
+  try {
+    const cur = await getScore(id);
+    if (cur) await set(PREFIX + id, { ...cur, ...patch, id });
+  } catch (e) { reportStorageProblem(e, 'your settings for this score'); }
 }

@@ -14,10 +14,18 @@ test.describe('keyboard: Space keeps its job on controls', () => {
     await sum.focus();
     await page.keyboard.press('Space');
     await expect(page.getByTestId('sec-band')).toHaveAttribute('open', '');
+    // one tool at a time: opening Band folded Loop away (its header still says what it is doing)
+    await expect(page.getByTestId('sec-loop')).not.toHaveAttribute('open', '');
+    await expect(page.getByTestId('status-loop')).toHaveText('Off');
+    await openPractice(page, 'loop');
+    await expect(page.getByTestId('sec-band')).not.toHaveAttribute('open', '');
     // the "Loop these bars" button: Space presses it
     await page.getByRole('button', { name: 'Loop these bars' }).focus();
     await page.keyboard.press('Space');
     await expect(page.getByTestId('loop-mark').first()).toBeVisible();
+    // the header and the shortcut say so
+    await expect(page.getByTestId('status-loop')).toHaveText('Bars 1–2');
+    await expect(page.getByTestId('practice-sheet').getByRole('link', { name: /Loop/ })).toHaveClass(/live/);
     await page.getByRole('button', { name: 'Close practice tools' }).click();
     await expect(page.getByRole('button', { name: 'Play' })).toBeVisible();
   });
@@ -59,10 +67,21 @@ test.describe('the practice drawer is a real dialog', () => {
     await openPractice(page);
     const titles = await sheet(page).locator('.psec > summary').allTextContents();
     expect(titles[0]).toMatch(/Loop/);
+    // in the order a rehearsal uses them
+    expect((await sheet(page).locator('.psec-title').allTextContents()).map((t) => t.split(' ')[0])).toEqual(['Loop', 'Drums', 'Pitch', 'Record', 'Band', 'Fingerings', 'Range']);
     await expect(page.getByTestId('sec-loop')).toHaveAttribute('open', '');
     await sheet(page).getByRole('link', { name: 'Drums' }).click();
     await expect(page.getByTestId('sec-drums')).toHaveAttribute('open', '');
     await expect(page.getByLabel('Groove', { exact: true })).toBeInViewport();
+    // nothing to set until a groove is chosen; then its controls appear and the header names it
+    await expect(page.getByTestId('status-drums')).toHaveText('None');
+    await expect(page.getByLabel('Drums on')).toHaveCount(0);
+    await expect(page.getByTestId('drums-none')).toBeVisible();
+    await page.getByLabel('Groove', { exact: true }).selectOption({ label: 'Starter B · Interlock (starter, not traditional)' });
+    await expect(page.getByLabel('Drums on')).toBeChecked();
+    await expect(page.getByTestId('status-drums')).toHaveText('B · Interlock');
+    await page.getByLabel('Drums on').uncheck();
+    await expect(page.getByTestId('status-drums')).toHaveText('B · Interlock · muted');
   });
 
   test('the Grooves studio is a dialog: focus in, Escape closes it, focus returns to the button that opened it', async ({ page }) => {

@@ -144,8 +144,8 @@ export default function PitchPanel({ getPlayer, session, notes, playing, enabled
   return (
     <div className="pitchpanel">
       <p className="muted small tip">
-        <strong>Headphones work best.</strong> The microphone listens to {partName} while the music plays; with a speaker it can also hear the backing.
-        Your own part is muted while the check is on, so only the other parts (and the click) play. The microphone is only open while the music plays or this drawer is open.
+        <strong>Headphones work best.</strong> Play {partName} along with the music: each note turns green (in tune), yellow (a little sharp or flat) or red (wrong or missed).
+        Your own part is silent while the check is on. The microphone is only open while the music plays or this drawer is open.
       </p>
       {error && <p className="error" role="alert"><AlertIcon size={18} /> {error}</p>}
       <div className="prow">
@@ -164,7 +164,7 @@ export default function PitchPanel({ getPlayer, session, notes, playing, enabled
           <button type="button" className="linkbtn inline" onClick={() => { lag.current?.reset(); setLagMs(0); try { localStorage.removeItem(LAG_KEY); } catch { /* ignore */ } }}>Forget it</button>
         </p>
       )}
-      {enabled && !playing && !summary && <p className="muted small">Press Play and play your part. Green = in tune, yellow = a little sharp or flat, red = wrong note or missed.</p>}
+      {enabled && !playing && !summary && <p className="muted small">Press Play and play your part.</p>}
       {summary && (
         <div className="psummary" data-testid="pitch-summary" role="status">
           {summary.pct === null

@@ -56,18 +56,6 @@ export default function KitEditor({ getCtx, existing, from, onSave, onCancel }: 
   const [starter, setStarter] = useState(!!from?.starter);
   /** What a tap puts on a step: soft, normal or accent (press and hold on a step is an accent, too). */
   const [brush, setBrush] = useState(2);
-  // how many steps fit on a line while every step stays at least 48 px wide: a whole beat per line on a narrow phone
-  const wrap = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(360);
-  useEffect(() => {
-    const el = wrap.current;
-    if (!el) return;
-    const set = () => setWidth(el.clientWidth || 360);
-    set();
-    const ro = new ResizeObserver(set);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
   const preview = useGroovePreview(getCtx, 300);
 
   const groove: Groove = { id: existing?.id ?? 'preview', name, kind: 'kit', createdAt: existing?.createdAt ?? Date.now(), feel, pattern };
@@ -109,26 +97,27 @@ export default function KitEditor({ getCtx, existing, from, onSave, onCancel }: 
     setPattern((p) => ({ ...p, tracks: { ...p.tracks, [inst]: p.tracks[inst].map((x, k) => (k === i ? v : x)) } }));
   };
   const per = pattern.steps === 16 ? 4 : 3;
-  const perRow = [pattern.steps, pattern.steps / 2, per].find((n) => n * 48 + (n - 1) * 5 <= width) ?? per;
 
   return (
-    <div className="kit" data-testid="kit-editor" ref={wrap}>
+    <div className="kit" data-testid="kit-editor">
       {starter && <p className="starter-note" data-testid="starter-label">{STARTER_LABEL}</p>}
-      <div className="prow" role="group" aria-label="Steps per bar">
-        <span className="plabel">Steps per bar</span>
-        <button type="button" className={`btn sm${pattern.steps === 16 ? ' on' : ''}`} aria-pressed={pattern.steps === 16} onClick={() => setPattern((p) => resizePattern(p, 16, p.bars))}>16 (straight)</button>
-        <button type="button" className={`btn sm${pattern.steps === 12 ? ' on' : ''}`} aria-pressed={pattern.steps === 12} onClick={() => setPattern((p) => resizePattern(p, 12, p.bars))}>12 (triplet)</button>
-      </div>
-      <div className="prow" role="group" aria-label="Bars">
-        <span className="plabel">Bars</span>
-        {([1, 2] as const).map((n) => <button key={n} type="button" className={`btn sm${pattern.bars === n ? ' on' : ''}`} aria-pressed={pattern.bars === n} onClick={() => setPattern((p) => resizePattern(p, p.steps, n))}>{n}</button>)}
-      </div>
-      {pattern.steps === 16 && (
-        <div className="prow" role="group" aria-label="Feel">
-          <span className="plabel">Feel</span>
-          {(['straight', 'triplet'] as Feel[]).map((f) => <button key={f} type="button" className={`btn sm${feel === f ? ' on' : ''}`} aria-pressed={feel === f} onClick={() => setFeel(f)}>{f === 'straight' ? 'Straight' : 'Triplet swing'}</button>)}
+      <div className="kitopts">
+        <div className="prow" role="group" aria-label="Steps per bar">
+          <span className="plabel">Steps</span>
+          <button type="button" className={`btn sm${pattern.steps === 16 ? ' on' : ''}`} aria-pressed={pattern.steps === 16} onClick={() => setPattern((p) => resizePattern(p, 16, p.bars))}>16 (straight)</button>
+          <button type="button" className={`btn sm${pattern.steps === 12 ? ' on' : ''}`} aria-pressed={pattern.steps === 12} onClick={() => setPattern((p) => resizePattern(p, 12, p.bars))}>12 (triplet)</button>
         </div>
-      )}
+        <div className="prow" role="group" aria-label="Bars">
+          <span className="plabel">Bars</span>
+          {([1, 2] as const).map((n) => <button key={n} type="button" className={`btn sm${pattern.bars === n ? ' on' : ''}`} aria-pressed={pattern.bars === n} onClick={() => setPattern((p) => resizePattern(p, p.steps, n))}>{n}</button>)}
+        </div>
+        {pattern.steps === 16 && (
+          <div className="prow" role="group" aria-label="Feel">
+            <span className="plabel">Feel</span>
+            {(['straight', 'triplet'] as Feel[]).map((f) => <button key={f} type="button" className={`btn sm${feel === f ? ' on' : ''}`} aria-pressed={feel === f} onClick={() => setFeel(f)}>{f === 'straight' ? 'Straight' : 'Triplet swing'}</button>)}
+          </div>
+        )}
+      </div>
       <div className="prow" role="group" aria-label="What a tap puts on a step" data-testid="brush">
         <span className="plabel">A tap makes a step</span>
         {([[1, 'Soft'], [2, 'Normal'], [3, 'Accent']] as const).map(([v, w]) => (
@@ -139,30 +128,33 @@ export default function KitEditor({ getCtx, existing, from, onSave, onCancel }: 
       </div>
       <p className="muted small legend" data-testid="legend">
         <span><span className="swatch v0" aria-hidden /> empty</span> <span><span className="swatch v1" aria-hidden /> soft</span> <span><span className="swatch v2" aria-hidden /> normal</span> <span><span className="swatch v3" aria-hidden /> accent</span>.
-        {' '}Tap a step to put the chosen strength on it; tap it again to clear it. Press and hold for an accent. The numbers are the beats.
+        {' '}Tap a step to fill it, tap again to clear it, hold for an accent. The numbers are the beats; swipe sideways for the rest of the bar.
       </p>
-      {Array.from({ length: pattern.bars }, (_, b) => (
-        <div key={b} className="kitbar" data-testid="kit-bar">
-          {pattern.bars > 1 && <h3 className="kitbar-h">Bar {b + 1}</h3>}
-          {KIT_INSTS.map((k) => (
-            <div key={k.id} className="kitrow" role="group" aria-label={`${k.label}${pattern.bars > 1 ? `, bar ${b + 1}` : ''}`}>
-              <span className="kitlabel">{k.label}</span>
-              <div className="cells" style={{ gridTemplateColumns: `repeat(${perRow}, minmax(0, 1fr))` }}>
-                {Array.from({ length: pattern.steps }, (_, i) => {
-                  const idx = b * pattern.steps + i;
-                  return <Cell key={i} label={`${k.label}${pattern.bars > 1 ? ` bar ${b + 1}` : ''} step ${i + 1}`} value={pattern.tracks[k.id][idx]} beatNo={i % per === 0 ? i / per + 1 : null} brush={brush} now={idx === nowStep} onSet={(v) => set(k.id, idx, v)} />;
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      ))}
-      <div className="prow sticky-bar">
+      <div className="prow sticky-bar top">
         <span className="plabel">Tempo</span>
         <NumField value={bpm} label="Preview tempo BPM" min={40} max={240} onCommit={setBpm} />
         <button type="button" className="btn" onClick={() => (playing ? preview.stop() : play())} aria-label={playing ? 'Stop the pattern' : 'Hear the pattern'}>{playing ? 'Stop' : 'Hear the pattern'}</button>
         <button type="button" className="btn ghost sm" onClick={() => setPattern((p) => emptyPattern(p.steps, p.bars))}>Clear all</button>
       </div>
+      {Array.from({ length: pattern.bars }, (_, b) => (
+        <div key={b} className="kitbar" data-testid="kit-bar">
+          {pattern.bars > 1 && <h3 className="kitbar-h">Bar {b + 1}</h3>}
+          {/* one grid: an instrument per line, a step per column, so you can see how the parts lock together */}
+          <div className="kitgrid">
+            {KIT_INSTS.map((k) => (
+              <div key={k.id} className="kitrow" role="group" aria-label={`${k.label}${pattern.bars > 1 ? `, bar ${b + 1}` : ''}`}>
+                <span className="kitlabel">{k.label}</span>
+                <div className="cells" style={{ gridTemplateColumns: `repeat(${pattern.steps}, 48px)` }}>
+                  {Array.from({ length: pattern.steps }, (_, i) => {
+                    const idx = b * pattern.steps + i;
+                    return <Cell key={i} label={`${k.label}${pattern.bars > 1 ? ` bar ${b + 1}` : ''} step ${i + 1}`} value={pattern.tracks[k.id][idx]} beatNo={i % per === 0 ? i / per + 1 : null} brush={brush} now={idx === nowStep} onSet={(v) => set(k.id, idx, v)} />;
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
       <label className="field">
         <span className="plabel">Start from a starter pattern</span>
         <select className="sel txt" aria-label="Start from a starter pattern" value="" onChange={(e) => {
