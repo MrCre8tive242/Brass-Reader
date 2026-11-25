@@ -88,7 +88,9 @@ export default function ScorePage() {
     }
   }, [derived]);
 
-  useEffect(() => { player.current?.setBpm(bpm); lsSet(`bpm:${id}`, String(bpm)); }, [bpm, id]);
+  useEffect(() => { player.current?.setBpm(bpm); }, [bpm]);
+  // persist only on user changes (writing from an effect would overwrite the stored value with the default before it is read)
+  const changeBpm = useCallback((n: number) => { setBpm(n); lsSet(`bpm:${id}`, String(n)); }, [id]);
   useEffect(() => { if (player.current) player.current.metronome = metronome; }, [metronome]);
   useEffect(() => { if (player.current) player.current.countIn = countIn; }, [countIn]);
 
@@ -167,7 +169,7 @@ export default function ScorePage() {
         onPlayPause={playPause}
         onPrev={() => goBar(-1)}
         onNext={() => goBar(1)}
-        onBpm={setBpm}
+        onBpm={changeBpm}
         onMetronome={setMetronome}
         onCountIn={setCountIn}
       />

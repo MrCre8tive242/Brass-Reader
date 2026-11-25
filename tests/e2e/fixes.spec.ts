@@ -87,3 +87,38 @@ for (const [inst, file] of [['trumpet', 'qa-timesig.musicxml'], ['trombone', 'qa
     }
   });
 }
+
+test('BPM field takes free typing, clamps on blur/Enter, and persists across reload', async ({ page }) => {
+  await openScore(page, 'scale.musicxml', 'bpm1');
+  const bpm = page.getByLabel('BPM');
+  await bpm.click();
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('90', { delay: 60 });
+  await expect(bpm).toHaveValue('90');
+  await page.keyboard.press('Enter');
+  await expect(bpm).toHaveValue('90');
+  // clear and type again: intermediate states are not clamped
+  await bpm.click();
+  await page.keyboard.press('Control+A');
+  await page.keyboard.press('Backspace');
+  await expect(bpm).toHaveValue('');
+  await page.keyboard.type('150', { delay: 60 });
+  await expect(bpm).toHaveValue('150');
+  await bpm.blur();
+  await expect(bpm).toHaveValue('150');
+  // out of range clamps only on commit
+  await bpm.fill('999');
+  await expect(bpm).toHaveValue('999');
+  await bpm.press('Enter');
+  await expect(bpm).toHaveValue('240');
+  await bpm.fill('5');
+  await bpm.blur();
+  await expect(bpm).toHaveValue('30');
+  await bpm.fill('133');
+  await bpm.blur();
+  await page.reload();
+  await expect(page.getByTestId('score')).toHaveAttribute('data-busy', '0', { timeout: 30_000 });
+  await expect(page.getByLabel('BPM')).toHaveValue('133');
+  await page.reload();
+  await expect(page.getByLabel('BPM')).toHaveValue('133'); // survives a second reload too
+});

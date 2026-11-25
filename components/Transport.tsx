@@ -1,5 +1,5 @@
 'use client';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 
 interface Props {
   playing: boolean;
@@ -24,6 +24,18 @@ const clampBpm = (n: number) => Math.max(30, Math.min(240, Math.round(n)));
 
 export default function Transport(p: Props) {
   const taps = useRef<number[]>([]);
+  // free typing: the field keeps its own text; the value is clamped to 30-240 on blur / Enter only
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return p.bpm;
+    const n = Number(draft);
+    setDraft(null);
+    if (draft.trim() === '' || !Number.isFinite(n)) return p.bpm;
+    const v = clampBpm(n);
+    if (v !== p.bpm) p.onBpm(v);
+    return v;
+  };
+  const step = (d: number) => { const base = commit(); p.onBpm(clampBpm(base + d)); };
   const tap = () => {
     const now = performance.now();
     const t = taps.current.filter((x) => now - x < 2500);
@@ -48,12 +60,15 @@ export default function Transport(p: Props) {
       </div>
       <div className="row opts">
         <div className="bpm">
-          <button type="button" className="tbtn sm" onClick={() => p.onBpm(clampBpm(p.bpm - 1))} aria-label="Slower">−</button>
+          <button type="button" className="tbtn sm" onClick={() => step(-1)} aria-label="Slower">−</button>
           <input
-            type="number" inputMode="numeric" min={30} max={240} value={p.bpm} aria-label="BPM"
-            onChange={(e) => { const n = Number(e.target.value); if (Number.isFinite(n) && n > 0) p.onBpm(clampBpm(n)); }}
+            type="number" inputMode="numeric" min={30} max={240} value={draft ?? p.bpm} aria-label="BPM"
+            onFocus={(e) => e.target.select()}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); (e.target as HTMLInputElement).blur(); } }}
           />
-          <button type="button" className="tbtn sm" onClick={() => p.onBpm(clampBpm(p.bpm + 1))} aria-label="Faster">+</button>
+          <button type="button" className="tbtn sm" onClick={() => step(1)} aria-label="Faster">+</button>
           <button type="button" className="tbtn sm tap" onClick={tap}>Tap</button>
         </div>
         <label className="chk"><input type="checkbox" checked={p.metronome} onChange={(e) => p.onMetronome(e.target.checked)} /> Click</label>
