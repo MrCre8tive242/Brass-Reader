@@ -108,6 +108,14 @@ export async function prepareFiles(files: File[]): Promise<Prepared> {
   return { kind: 'images', images };
 }
 
+const PASSCODE_KEY = 'brass-reader:passcode';
+export function getPasscode(): string {
+  try { return localStorage.getItem(PASSCODE_KEY) ?? ''; } catch { return ''; }
+}
+export function setPasscode(v: string): void {
+  try { if (v) localStorage.setItem(PASSCODE_KEY, v); else localStorage.removeItem(PASSCODE_KEY); } catch { /* ignore */ }
+}
+
 export interface OmrResponse { musicxml: string; engine: 'claude' | 'audiveris'; warnings: string[] }
 
 export async function callOmr(images: string[], engine: 'auto' | 'claude' | 'audiveris' = 'auto', fetchImpl: typeof fetch = fetch): Promise<OmrResponse> {
@@ -115,13 +123,14 @@ export async function callOmr(images: string[], engine: 'auto' | 'claude' | 'aud
   try {
     res = await fetchImpl('/api/omr', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(getPasscode() ? { 'X-App-Passcode': getPasscode() } : {}) },
       body: JSON.stringify({ images, engine }),
     });
   } catch {
     throw new OmrError('Could not reach the reader. Check your connection.', 'network');
   }
   const json = await res.json().catch(() => ({}));
+  if (res.status === 401) setPasscode(''); // wrong or missing: ask again
   if (!res.ok) throw new OmrError(json.error || `Reader error (${res.status})`, json.code || 'error');
   return json as OmrResponse;
 }

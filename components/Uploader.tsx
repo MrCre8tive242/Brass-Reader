@@ -1,7 +1,7 @@
 'use client';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { callOmr, prepareFiles, OmrError } from '@/lib/omrClient';
+import { callOmr, prepareFiles, getPasscode, setPasscode, OmrError } from '@/lib/omrClient';
 import { extractTitle } from '@/lib/musicxml';
 import { newId, saveScore } from '@/lib/library';
 import { INSTRUMENT_IDS, INSTRUMENTS, DEFAULT_SOURCE_INSTRUMENT, type InstrumentId } from '@/lib/instruments';
@@ -24,13 +24,16 @@ export default function Uploader() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<{ message: string; code: string } | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [caps, setCaps] = useState<{ audiveris: boolean } | null>(null);
+  const [caps, setCaps] = useState<{ audiveris: boolean; passcode: boolean } | null>(null);
+  const [passcode, setPass] = useState('');
+  const [hasStored, setHasStored] = useState(true);
   const xmlInput = useRef<HTMLInputElement>(null);
   const urls = useRef<string[]>([]);
 
   useEffect(() => () => urls.current.forEach((u) => URL.revokeObjectURL(u)), []);
+  useEffect(() => { setHasStored(!!getPasscode()); }, []);
   useEffect(() => {
-    fetch('/api/omr').then((r) => r.json()).then((j) => setCaps({ audiveris: !!j.audiveris })).catch(() => {});
+    fetch('/api/omr').then((r) => r.json()).then((j) => setCaps({ audiveris: !!j.audiveris, passcode: !!j.passcode })).catch(() => {});
   }, []);
 
   async function saveAndOpen(xml: string, fallbackTitle: string, origin: 'scan' | 'musicxml') {
@@ -80,6 +83,10 @@ export default function Uploader() {
 
   async function read(engine: 'auto' | 'audiveris' = 'auto') {
     setError(null); setWarnings([]);
+    if (caps?.passcode && !hasStored) {
+      if (!passcode.trim()) { setError({ message: 'Enter the passcode first.', code: 'unauthorized' }); return; }
+      setPasscode(passcode.trim()); setHasStored(true);
+    }
     try {
       setBusy('Preparing pages…');
       const p = await prepareFiles(items.map((i) => i.file));
@@ -90,6 +97,7 @@ export default function Uploader() {
       await saveAndOpen(r.musicxml, titleFromName(items[0].file.name), 'scan');
     } catch (e) {
       const err = e as OmrError;
+      if (err.code === 'unauthorized') { setHasStored(false); setPass(''); }
       setError({ message: err.message || 'Reading failed.', code: err.code ?? 'error' });
       setBusy(null);
     }
@@ -138,6 +146,12 @@ export default function Uploader() {
               {INSTRUMENT_IDS.map((id) => <option key={id} value={id}>{INSTRUMENTS[id].name}</option>)}
             </select>
           </label>
+          {caps?.passcode && !hasStored && (
+            <label className="picker-one">
+              <span className="muted small">Passcode (ask the person who runs this app)</span>
+              <input className="sel" type="password" autoComplete="off" value={passcode} onChange={(e) => setPass(e.target.value)} aria-label="Passcode" data-testid="passcode-input" />
+            </label>
+          )}
           <button type="button" className="btn primary" disabled={!!busy} onClick={() => read('auto')}>
             {hasPdfOnly ? 'Read PDF' : `Read ${items.length} page${items.length > 1 ? 's' : ''}`}
           </button>

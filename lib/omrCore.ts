@@ -1,6 +1,16 @@
 import { validateMusicXml } from './musicxml';
 import { extractXml, retryPrompt } from './omrPrompt';
 
+/** Thrown by `callClaude` when the model hit its output limit (the XML is cut off and cannot be used). */
+export class OmrTruncated extends Error {
+  constructor() { super('The reply was cut off at the output limit.'); }
+}
+/** An error whose message is safe to show to the user as is. Everything else is logged and replaced by a generic text. */
+export class OmrUserError extends Error {}
+
+export const GENERIC_READER_ERROR = 'The reader had a problem with this scan. Please try again in a moment.';
+export const TOO_LONG_ERROR = 'This music is too long to read in one go. Try one or two pages at a time.';
+
 export type Engine = 'auto' | 'claude' | 'audiveris';
 
 export interface OmrDeps {
@@ -31,12 +41,21 @@ export function validateImages(images: unknown): string | null {
   return null;
 }
 
-async function viaClaude(images: string[], deps: OmrDeps): Promise<{ xml: string } | { error: string }> {
+type ClaudeResult = { xml: string } | { error: string; truncated?: boolean };
+
+function describeFailure(stage: string, e: unknown): ClaudeResult {
+  if (e instanceof OmrTruncated) return { error: TOO_LONG_ERROR, truncated: true };
+  if (e instanceof OmrUserError) return { error: e.message };
+  console.error(`[omr] ${stage}:`, e); // details stay on the server
+  return { error: GENERIC_READER_ERROR };
+}
+
+async function viaClaude(images: string[], deps: OmrDeps): Promise<ClaudeResult> {
   let raw: string;
   try {
     raw = await deps.callClaude(images);
   } catch (e) {
-    return { error: `Claude request failed: ${(e as Error).message}` };
+    return describeFailure('claude request failed', e);
   }
   let xml = extractXml(raw);
   let v = validateMusicXml(xml);
@@ -45,12 +64,13 @@ async function viaClaude(images: string[], deps: OmrDeps): Promise<{ xml: string
   try {
     raw = await deps.callClaude(images, { previous: raw, error: firstError });
   } catch (e) {
-    return { error: `Claude retry failed: ${(e as Error).message}` };
+    return describeFailure('claude retry failed', e);
   }
   xml = extractXml(raw);
   v = validateMusicXml(xml);
   if (v.ok) return { xml };
-  return { error: `Claude returned unusable MusicXML: ${v.error}` };
+  console.error('[omr] claude returned unusable MusicXML:', v.error);
+  return { error: 'The reader could not turn this into valid music. A sharper, straighter photo usually helps.' };
 }
 
 export async function runOmr(images: string[], engine: Engine, deps: OmrDeps): Promise<OmrResult> {
@@ -74,6 +94,9 @@ export async function runOmr(images: string[], engine: Engine, deps: OmrDeps): P
     if ('xml' in r) return { ok: true, status: 200, musicxml: r.xml, engine: 'claude', warnings };
     claudeError = r.error;
     warnings.push(r.error);
+    if ('truncated' in r && r.truncated && !(wantAudiveris && deps.hasAudiveris)) {
+      return { ok: false, status: 422, code: 'too_long', error: r.error };
+    }
   } else if (engine === 'auto') {
     warnings.push('No ANTHROPIC_API_KEY configured; using the free reader.');
   }
@@ -85,7 +108,8 @@ export async function runOmr(images: string[], engine: Engine, deps: OmrDeps): P
       if (!v.ok) throw new Error(v.error);
       return { ok: true, status: 200, musicxml: a.musicxml, engine: 'audiveris', warnings: [...warnings, ...(a.warnings ?? [])] };
     } catch (e) {
-      return { ok: false, status: 502, code: 'reader_failed', error: `Both readers failed. ${claudeError ? claudeError + ' ' : ''}Free reader: ${(e as Error).message}` };
+      console.error('[omr] free reader failed:', e);
+      return { ok: false, status: 502, code: 'reader_failed', error: `${claudeError ? 'Both readers failed. ' + claudeError + ' ' : 'The free reader could not read this. '}Try a sharper photo or open a MusicXML file.` };
     }
   }
   return { ok: false, status: 502, code: 'reader_failed', error: claudeError ?? 'Reader failed.' };

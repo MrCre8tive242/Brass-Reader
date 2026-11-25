@@ -171,3 +171,35 @@ test('client-side errors do not offer the free reader', async ({ page }) => {
   await expect(page.getByTestId('upload-error')).toContainText('Both readers failed');
   await expect(page.getByRole('button', { name: 'Try free reader' })).toBeVisible();
 });
+
+test('passcode: asked once, stored, wrong one gives a clear error and asks again', async ({ page }) => {
+  const sent: (string | undefined)[] = [];
+  await page.route('**/api/omr', async (route) => {
+    const r = route.request();
+    if (r.method() === 'GET') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ claude: true, audiveris: false, passcode: true }) });
+    const pc = r.headers()['x-app-passcode'];
+    sent.push(pc);
+    if (pc !== 'swordfish') return route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'That passcode is not right.', code: 'unauthorized' }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ musicxml: fixture('scale.musicxml'), engine: 'claude', warnings: [] }) });
+  });
+  await page.goto('/');
+  await page.getByTestId('file-input').setInputFiles(path.join(fixtures, 'sample-scan.pdf'));
+  await page.getByRole('button', { name: 'Read PDF' }).click();
+  await expect(page.getByTestId('upload-error')).toContainText('Enter the passcode first');
+  await page.getByTestId('passcode-input').fill('wrong');
+  await page.getByRole('button', { name: 'Read PDF' }).click();
+  await expect(page.getByTestId('upload-error')).toContainText('not right');
+  await expect(page.getByTestId('passcode-input')).toBeVisible(); // asked again
+  await expect(page.getByRole('button', { name: 'Try free reader' })).toHaveCount(0);
+  await page.getByTestId('passcode-input').fill('swordfish');
+  await page.getByRole('button', { name: 'Read PDF' }).click();
+  await page.waitForURL(/\/score\//, { timeout: 30_000 });
+  expect(sent).toEqual(['wrong', 'swordfish']);
+  // stored: a second scan does not ask
+  await page.goto('/');
+  await page.getByTestId('file-input').setInputFiles(path.join(fixtures, 'sample-scan.pdf'));
+  await expect(page.getByTestId('passcode-input')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Read PDF' }).click();
+  await page.waitForURL(/\/score\//, { timeout: 30_000 });
+  expect(sent[sent.length - 1]).toBe('swordfish');
+});

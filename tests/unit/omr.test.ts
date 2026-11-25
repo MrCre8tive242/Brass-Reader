@@ -69,7 +69,7 @@ describe('runOmr', () => {
     const r = await runOmr([img], 'auto', d);
     expect(d.callClaude).toHaveBeenCalledTimes(2);
     expect(r).toMatchObject({ ok: true, engine: 'audiveris' });
-    expect((r as { warnings: string[] }).warnings[0]).toMatch(/Claude/);
+    expect((r as { warnings: string[] }).warnings[0]).toMatch(/valid music/);
   });
   it('falls back when claude throws', async () => {
     const d = deps({ hasAudiveris: true, callClaude: vi.fn(async () => { throw new Error('529 overloaded'); }) });
@@ -126,5 +126,37 @@ describe('XML parse errors', () => {
   it('do not leak the xmldom wrapper text', () => {
     expect(() => parseXml('')).toThrow(/not valid MusicXML/);
     try { parseXml(''); } catch (e) { expect((e as Error).message).not.toMatch(/Reporting|caused Error/); }
+  });
+});
+
+import { OmrTruncated, OmrUserError, GENERIC_READER_ERROR } from '@/lib/omrCore';
+
+describe('runOmr error handling', () => {
+  it('does not leak SDK error text and logs it server-side', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const d = deps({ callClaude: vi.fn(async () => { throw new Error('401 invalid x-api-key sk-ant-SECRET req_123'); }) });
+    const r = await runOmr([img], 'auto', d);
+    expect(r).toMatchObject({ ok: false, status: 502 });
+    expect(JSON.stringify(r)).not.toMatch(/sk-ant|req_123|x-api-key/);
+    expect((r as { error: string }).error).toContain(GENERIC_READER_ERROR);
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+  it('shows OmrUserError messages as they are', async () => {
+    const d = deps({ callClaude: vi.fn(async () => { throw new OmrUserError('The reader is busy right now.'); }) });
+    expect(await runOmr([img], 'auto', d)).toMatchObject({ error: expect.stringContaining('busy') });
+  });
+  it('truncated output gives a clear too_long error without a pointless retry', async () => {
+    const d = deps({ callClaude: vi.fn(async () => { throw new OmrTruncated(); }) });
+    const r = await runOmr([img], 'auto', d);
+    expect(r).toMatchObject({ ok: false, status: 422, code: 'too_long' });
+    expect((r as { error: string }).error).toMatch(/too long/);
+    expect(d.callClaude).toHaveBeenCalledTimes(1);
+  });
+  it('truncated output still falls back to the free reader when configured', async () => {
+    const d = deps({ hasAudiveris: true, callClaude: vi.fn(async () => { throw new OmrTruncated(); }) });
+    const r = await runOmr([img], 'auto', d);
+    expect(r).toMatchObject({ ok: true, engine: 'audiveris' });
+    expect((r as { warnings: string[] }).warnings[0]).toMatch(/too long/);
   });
 });
