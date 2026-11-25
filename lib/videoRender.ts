@@ -1,6 +1,7 @@
 import { windowOverlay, type Overlay, type NoteLookup } from './windowOverlay';
 import { drawWindow, makeWindowOsmd, measureLayout, type Box, type Osmd, type WindowLayout } from './windowRender';
-import { noteKey, offsetInBar, type Timeline } from './timeline';
+import { noteKey, offsetInBar, slotAt, type Timeline } from './timeline';
+import { glideX } from './glide';
 import type { FingerShape, FingerStyle } from './fingerStyle';
 import type { InstrumentId } from './instruments';
 import { framePos, frameCount, videoSeconds, videoSize, countInLead, estimateBytes, NO_LEAD, WARN_BYTES, VIDEO_FPS, VIDEO_BPS, AUDIO_BPS, type FramePos, type Lead, type VideoOrientation, type VideoView } from './videoPlan';
@@ -374,8 +375,14 @@ export class FrameDrawer {
       for (const s of L.steps) if (s.bar === (full ? p.bar : 1) && s.off <= p.offQ + 1e-6) pick = s;
       if (pick && box && !counting) {
         const w = Math.max(5, L.space * 0.45);
+        // glide from note to note (and on to the bar line), as on screen
+        const slot = slotAt(j.tl, p.q);
+        const barLen = (j.tl.measureStartsQ[slot + 1] ?? j.tl.totalQ) - (j.tl.measureStartsQ[slot] ?? 0);
+        const pts = L.steps.filter((s) => s.bar === (full ? p.bar : 1)).sort((a, b) => a.off - b.off);
+        let x = glideX(pts, p.offQ, barLen, box.x + box.w - w) ?? pick.x;
+        if (Math.abs(x - pick.x) > box.w) x = pick.x;
         ctx.fillStyle = '#ff7a00'; ctx.globalAlpha = 0.9;
-        roundRect(ctx, sx + pick.x - w / 2, sy + box.y, w, box.h, 3); ctx.fill(); ctx.globalAlpha = 1;
+        roundRect(ctx, sx + x - w / 2, sy + box.y, w, box.h, 3); ctx.fill(); ctx.globalAlpha = 1;
       }
       ctx.restore();
     }

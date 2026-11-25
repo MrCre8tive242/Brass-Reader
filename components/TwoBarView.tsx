@@ -5,6 +5,7 @@ import { windowAt, windowOfSlot, nextSlotOf, prevSlotOf, type BarWindow } from '
 import { drawWindow, makeWindowOsmd, type Box, type Osmd, type WindowLayout } from '@/lib/windowRender';
 import { windowOverlay, type Overlay, type NoteLookup } from '@/lib/windowOverlay';
 import type { FingerStyle } from '@/lib/fingerStyle';
+import { glideX } from '@/lib/glide';
 import type { InstrumentId } from '@/lib/instruments';
 import type { NoteMark } from './ScoreView';
 
@@ -341,22 +342,31 @@ class Core {
     for (const s of L.steps) if (s.bar === 1 && s.off <= off + 1e-6) pick = s;
     const b = a.boxes[0] ?? L.bars[0];
     const tag = `${a.key}:${pick?.idx ?? -1}:${this.gen}`;
-    if (tag === this.placed) return;
-    this.placed = tag;
-    if (b && b.w > 0) {
-      a.hl.style.display = 'block';
-      a.hl.style.transform = `translate(${b.x}px, ${b.y}px)`;
-      a.hl.style.width = `${b.w}px`;
-      a.hl.style.height = `${b.h}px`;
-      if (pick) {
-        this.cursor.style.display = 'block';
-        const w = Math.max(3, L.space * 0.45);
-        this.cursor.style.width = `${w}px`;
-        this.cursor.style.height = `${b.h}px`;
-        this.cursor.style.transform = `translate(${pick.x - w / 2}px, ${b.y}px)`;
-        this.cursor.setAttribute('data-step', String(pick.idx));
-      }
-    } else a.hl.style.display = 'none';
+    const w = Math.max(3, L.space * 0.45);
+    if (tag !== this.placed) {
+      this.placed = tag;
+      if (b && b.w > 0) {
+        a.hl.style.display = 'block';
+        a.hl.style.transform = `translate(${b.x}px, ${b.y}px)`;
+        a.hl.style.width = `${b.w}px`;
+        a.hl.style.height = `${b.h}px`;
+        if (pick) {
+          this.cursor.style.display = 'block';
+          this.cursor.style.width = `${w}px`;
+          this.cursor.style.height = `${b.h}px`;
+          this.cursor.setAttribute('data-step', String(pick.idx));
+        }
+      } else a.hl.style.display = 'none';
+    }
+    // every frame: glide from note to note (and on to the bar line) instead of jumping
+    if (b && b.w > 0 && pick) {
+      const tl = this.props().tl;
+      const start = tl.measureStartsQ[win.slot] ?? 0;
+      const end = tl.measureStartsQ[win.slot + 1] ?? tl.totalQ;
+      const pts = L.steps.filter((s) => s.bar === 1).sort((x, y) => x.off - y.off);
+      const x = glideX(pts, off, Math.max(0, end - start), b.x + b.w - w) ?? pick.x;
+      this.cursor.style.transform = `translate(${x - w / 2}px, ${b.y}px)`;
+    }
   }
 
   autoScroll(force: boolean) {

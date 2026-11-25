@@ -1,4 +1,5 @@
 'use client';
+import { glideX } from '@/lib/glide';
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { noteKey } from '@/lib/timeline';
 import { layoutFinger, markOfText, type FingerStyle } from '@/lib/fingerStyle';
@@ -74,7 +75,7 @@ interface Props {
 }
 
 /** First time OSMD's cursor visits a position: `idx` = how many iterator steps from the start. */
-interface Step { off: number; idx: number }
+interface Step { off: number; idx: number; x: number }
 interface Box { x: number; y: number; w: number; h: number }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -89,6 +90,7 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
   const osmdRef = useRef<Osmd>(null);
   const steps = useRef<Step[][]>([]); // per written bar (1-based), sorted by offset
   const stepCount = useRef(0);
+  const barLens = useRef<number[]>([]);
   const boxes = useRef<Box[]>([]);
   const cur = useRef(-1);
   const lastPos = useRef<{ q: number; measure: number; off: number }>({ q: 0, measure: 1, off: 0 });
@@ -129,7 +131,12 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
       const key = `${m}:${Math.round(off * 1000)}`;
       if (!seen.has(key)) {
         seen.add(key);
-        (byBar[m] ??= []).push({ off, idx });
+        // where the cursor stands at this step (for the glide between notes)
+        c.update();
+        const el = c.cursorElement as HTMLElement | undefined;
+        const x = (parseFloat(el?.style.left ?? '') || 0) + (parseFloat(el?.style.width ?? '') || 0) / 2;
+        (byBar[m] ??= []).push({ off, idx, x });
+        barLens.current[m] = (c.iterator.CurrentMeasure?.Duration?.RealValue ?? 1) * 4;
       }
       c.iterator.moveToNext();
       idx++;
@@ -170,6 +177,24 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
     boxes.current = list;
   }
 
+  /** Slide the cursor from the note it stands on toward the next one (and on to the bar line). */
+  function glide(measure: number, offsetQ: number) {
+    const el = osmdRef.current?.cursor?.cursorElement as HTMLElement | undefined;
+    if (!el) return;
+    const list = steps.current[measure];
+    const b = boxes.current[measure - 1];
+    const left = parseFloat(el.style.left) || 0;
+    const w = parseFloat(el.style.width) || 0;
+    let dx = 0;
+    if (list?.length && b && b.w > 0) {
+      const x = glideX(list, offsetQ, barLens.current[measure] ?? 4, b.x + b.w - w);
+      if (x !== null) dx = x - (left + w / 2);
+      // never further than the bar: a stale step (wrong line) must not throw the line across the page
+      if (Math.abs(dx) > b.w) dx = 0;
+    }
+    el.style.transform = dx ? `translateX(${dx}px)` : '';
+  }
+
   /** Cursor iterator index for written bar `measure` at `offsetQ` into it. */
   function stepFor(measure: number, offsetQ: number): number {
     const by = steps.current;
@@ -189,7 +214,8 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
     const osmd = osmdRef.current;
     if (!osmd || !stepCount.current) return;
     const target = stepFor(measure, offsetQ);
-    // called on every animation frame while playing: do nothing unless the cursor actually moves
+    // called on every animation frame while playing: glide the line, the rest only when it moves on
+    glide(measure, offsetQ);
     if (!forceScroll && placed.current.step === target && placed.current.measure === measure) return;
     placed.current = { step: target, measure };
     const c = osmd.cursor;
@@ -197,6 +223,7 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
       if (target < cur.current) { c.reset(); cur.current = 0; }
       while (cur.current < target) { c.iterator.moveToNext(); cur.current++; }
       c.update();
+      glide(measure, offsetQ);
     }
     // highlight the current bar
     const b = boxes.current[measure - 1];
