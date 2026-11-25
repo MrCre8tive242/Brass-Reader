@@ -1,10 +1,10 @@
 # Brass Reader — BUILD_PLAN
 
 ## STATUS
-Phase: REFINE
-Next model: Fable (high) refine (build, QA and fix pass are done)
-Last updated by: fixer agent
-Current step: Fix pass DONE (see "Fix pass" below); step 5 (audiveris-server) still owned by another agent
+Phase: DONE
+Next model: none (build, QA, fix pass and refinement are done)
+Last updated by: refine agent
+Current step: Refinement DONE (see "Refinement Log" at the end). Next real-world step: set ANTHROPIC_API_KEY and try the reader on real charts (never run live so far). Step 5 (audiveris-server) is still owned by another agent.
 
 ## Goal
 Mobile-first web app for a brass player (Junkanoo-style brass/drum group). Upload a photo or PDF of sheet music → app reads it into MusicXML → shows the score with a moving playback cursor + highlighted current bar → play/pause/prev bar/next bar/tap-bar-to-seek → set BPM → switch instrument (trumpet, mellophone, baritone, trombone, sousaphone), which changes BOTH the sound and the written part (transposition + clef) → download MIDI and MusicXML. Scans saved locally so you don't pay to rescan.
@@ -160,4 +160,56 @@ Not fixed / left for refine
 - Enharmonic key choice for E major -> F# vs Gb (QA M3) not changed; downloaded MusicXML after auto-octave still has the octave baked in (QA M4).
 
 ## Refinement Log
-(refiner writes here)
+One commit per logical change ("Brass Reader refine: ..."). Tests after the pass: 223 vitest unit tests, 38 Playwright e2e tests, `npm run build` passes; the production build was also smoke-tested with `next start` (PDF read, sample loading and playback under the new content security policy, 0 console errors).
+
+### 1. Reading (OMR)
+- **Output format redesign** (`lib/omrNotation.ts`, new). The model no longer writes MusicXML. It writes one line per bar in a compact text format (`7: C5:q D5:e E5:e r:h`), with accidentals only where a sign is printed. `parseNotation()` is tolerant (unknown tokens are collected, never thrown) and `notationToMusicXml()` builds the MusicXML in code: key signature and in-bar accidental rules, ties (a "tie" to another pitch is dropped as a slur), tuplets, dots, chords, grace notes, pickup (`0:`), multi-bar rests (`17-24: R`), repeats, endings, segno/coda/fine/D.C./D.S., mid-piece key/time/clef changes, several parts, tempo. Roughly ten times fewer output tokens than MusicXML, cannot be malformed, and each bar can be checked and re-read alone. A reply in MusicXML is still accepted (fallback path).
+- **Prompt rewrite** (`lib/omrPrompt.ts`): explains the purpose, the format, staff-position anchors for treble and bass clef, bar-sum self-check, photo handling, what to ignore, multi-page and top/bottom-half continuity, multi-staff scores, `? <bar>: <doubt>` lines for real uncertainty, `NOT_MUSIC` for non-music pictures. The worked example in the prompt is unit-tested (parses with no problems, every bar adds up, plays in the right order).
+- **Hints** from the player are sent and used: "written for" instrument/clef, and the name of one part to read on a multi-staff page (sanitised, 40 chars). Every image is labelled ("Page 2 of 3, top part").
+- **Targeted second look** (`lib/omrCore.ts`): bars that fail the bar-sum check (or hold unreadable tokens) are sent back once, with what was read and what is wrong; the reply holds only corrected lines (or a corrected `time:` header) and is merged by part and bar. The better of the two readings wins. At most two model calls per scan; the second is skipped if the first took over 140 s (server limit 300 s). It is a fresh single-turn request (no replayed assistant turn), with a cache breakpoint on the system prompt and on the last image so the second call reads the images from the prompt cache.
+- **Route** (`app/api/omr/route.ts`, `lib/omrMessage.ts`): `max_tokens` default 32000 (range 4000-64000; it covers the model's reasoning too), optional `OMR_EFFORT`, typed error chain (busy, key rejected, unreachable), token usage logged server-side, image type sniffed from magic bytes (the declared type is not trusted; non-images are 400). Request gained `tiles` and `hints`; reply gained `flags`. New code `not_music` (422).
+- **Bar check** (`lib/repair.ts`): a short bar is no longer padded/flagged when it completes the pickup before a repeat sign, Fine or D.C./D.S., or when a repeat sign splits a bar in two. Issues carry the part index.
+- **Photo clean-up on the phone** (`lib/imagePrep.ts` new, `lib/omrClient.ts`): EXIF orientation applied explicitly, manual rotate button per page, greyscale, lighting flattened (per-tile paper estimate, bilinear), contrast stretched without hard thresholding; sent at up to 2200 px. Pieces of up to 3 pages are cut into a top and bottom image at a strictly blank band between systems (never through a line joining staves; no cut on tilted photos), doubling the detail the reader gets. PDFs get the same cut but no clean-up. Canvases are released after encoding.
+- **Review step** (`components/Uploader.tsx`): after reading, nothing is saved until the player has seen clef / key / time / bar count, the list of things to check, and (for several parts) chosen a part. They can edit the title, fix a miscounted key signature without a new scan (`rekeyXml()` re-derives every pitch from the printed accidentals), read again, or open the score. Warnings for a clef that contradicts "written for" and for near-empty readings.
+- **Part picker** (`extractPart()`, score page): multi-part scores show a Part select (one part or all together), remembered per score; an auto-detected "written for" follows the part.
+- **Bars to check on the score**: the reader's doubts are saved with the score; flagged bars are underlined on the score and listed in a collapsible panel where each line jumps to its bar.
+
+### 2. Playback
+- iOS audio: `lib/audioUnlock.ts` is called synchronously inside the Play gesture (silent-buffer unlock; `navigator.audioSession.type = 'playback'` so the ring/silent switch does not mute on Safari 16.4+; silent looping `<audio>` fallback on older iOS, stopped on pause). If the context will not start the app says "tap Play once more". A suspended/interrupted context (call, lock screen) and a hidden tab pause playback cleanly. "No sound?" help sits next to the sound status.
+- The cursor is drawn behind the scheduling clock by `outputLatency + baseLatency` (Bluetooth speakers); scheduling itself is unchanged.
+- Count-in is a real bar of beats: before a pickup it counts up to the pickup (plus a whole bar if that would be under two clicks). Metronome and count-in use dotted-quarter beats in 6/8, 9/8, 12/8, and a pickup bar no longer gets a false downbeat.
+- Sample loading: spinner and "Loading ... sound", "Try loading again" on fallback, samples kept in the browser Cache API (works offline after the first load). The printed metronome mark seeds the BPM. Click / count-in are remembered. Hold − / + to run the tempo. Screen wake lock while a score is open.
+- Cursor updates do nothing unless the step or bar changed (no layout work every frame); auto-beaming is switched on for scores without beams.
+
+### 3. UI
+- Home: brand header, one big "Take a photo" action, tips, library cards with origin and age, in-page delete confirmation (no `window.confirm`), clear empty / loading / storage-blocked states, "Score not found" page.
+- Uploader: page thumbnails with number, rotate, reorder, remove; progress with seconds counter; errors with Try again / free reader / open MusicXML.
+- Player: drawn icons (no emoji glyphs), larger Play, tabular bar counter, BPM field with caption, lamp-style Click / Count-in toggles, status pill, collapsible checks. Checked with screenshots at 320, 375 and 390 wide portrait, 844x390 landscape and 1280x800 desktop, dark and light.
+
+### 4. Security and performance
+- Security headers on every response (nosniff, frame deny, referrer policy, permissions policy) and a content security policy in production; `/api` responses are `no-store`; `x-powered-by` removed.
+- `/api/omr`: overall daily ceiling (`OMR_DAILY_LIMIT`, default 300, counted only for requests that reach a reader) on top of the per-address limit; image count cap follows the page/tile layout (6 pages, 12 images); magic-byte check; hints and tiles validated.
+- `.mxl` zip-bomb guard and a 30 MB cap on score text.
+- Long scores: a 160-bar part draws in about 1.6 s on desktop Chromium and plays at 60 fps with the cursor inside its bar (e2e). The source-instrument hint is memoised (it re-parsed the XML on every bar change).
+
+### Interface changes (additive unless noted)
+- `POST /api/omr` body: `tiles?: number[]`, `hints?: { instrument?, part? }`. Reply: `flags: { bar, text }[]`. Max images 12 (6 pages).
+- `OmrDeps.callClaude(req: OmrRequest, followUp?: string)` (was `(images, retry?)`); `runOmr(req, engine, deps)` takes the request object (changed).
+- `prepareFiles(files | { file, rotate }[], onProgress?)` returns `tiles`; `callOmr({ images, tiles, hints }, engine)` (changed). `imageToDataUrl` / `pdfToDataUrls` removed (unused).
+- `SavedScore.flags?`, `SavedScore.partIndex?`. `BarIssue.part`. `ScoreView` prop `flagged`. `Player.play()` returns `Promise<boolean>`, `Player.onBlocked`, `Player.outputDelay()`, exports `beatLengthQ`, `countInClicks`.
+- New files: `lib/omrNotation.ts`, `lib/omrMessage.ts`, `lib/imagePrep.ts`, `lib/audioUnlock.ts`, `components/Icons.tsx`; tests `notation`, `imagePrep`, `routeModel` (unit) and `refine.spec.ts` (e2e).
+- New env: `OMR_EFFORT`, `OMR_DAILY_LIMIT`. `OMR_MAX_TOKENS` default is now 32000.
+
+### NOT TESTED (be honest with the user about these)
+- **The real reader.** No API key exists here, so the new prompt, the text format and the second look have never been run against a real model or a real photo. Everything around the model call is tested with the call replaced by a fake; reading accuracy on real charts is unknown. First thing to do with a key: scan 5-10 real parts, compare, and tune the prompt.
+- Token use, cost and time per scan, prompt-cache hits on the second look, and behaviour at the 300 s limit are estimates.
+- Real iPhone / Android hardware: camera capture, EXIF from a real camera, HEIC, the silent switch, audio-session behaviour, wake lock, Bluetooth delay, canvas memory on old phones. Only desktop Chromium (with phone-sized viewports) was used.
+- The photo clean-up and page cut were tested on synthetic pages (gradients, staves, joins), not on real photographs. Skew, curl and perspective are left to the model.
+- Audiveris fallback end to end.
+
+### Left for later
+- Reading long pieces in batches of 2 pages with the previous reading as context (today all pages go in one request; more than 3 pages are not cut in halves).
+- Correcting clef or time signature without a rescan; editing single notes.
+- Loop a range of bars for practice; swing playback.
+- A shared, durable rate limit (KV) instead of per-instance memory.
+- No server-side `fallbacks` parameter on the model call (a refusal on sheet music is unlikely; it is reported as an error).

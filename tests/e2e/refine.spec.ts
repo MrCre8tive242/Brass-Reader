@@ -282,3 +282,42 @@ test('long score: 160 bars draw in reasonable time and playback stays smooth', a
   expect(Number(label!.match(/Bar (\d+)/)![1])).toBeGreaterThanOrEqual(8);
   console.log(`long score: drawn in ${drawMs} ms, ${f.n} frames in 5 s, ${f.long} long frames`);
 });
+
+test('holding + runs the tempo up; a short tap moves it by one', async ({ page }) => {
+  await seedScore(page, 'hold1', 'Hold', fixture('scale.musicxml'));
+  await page.goto('/score/hold1');
+  await expect(page.getByTestId('score')).toHaveAttribute('data-busy', '0', { timeout: 30_000 });
+  await expect(page.getByLabel('BPM')).toHaveValue('100');
+  await page.getByRole('button', { name: 'Faster' }).click();
+  await expect(page.getByLabel('BPM')).toHaveValue('101');
+  const box = (await page.getByRole('button', { name: 'Faster' }).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(1300);
+  await page.mouse.up();
+  const v = Number(await page.getByLabel('BPM').inputValue());
+  expect(v).toBeGreaterThan(108);
+  expect(v).toBeLessThanOrEqual(240);
+  await page.waitForTimeout(400);
+  expect(Number(await page.getByLabel('BPM').inputValue())).toBe(v); // it stops when released
+});
+
+test('home: empty state, saved scores with origin and age, delete asks first', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByTestId('empty-library')).toContainText('No scores yet');
+  await seedScore(page, 'home1', 'Keep Me', fixture('scale.musicxml'));
+  await seedScore(page, 'home2', 'Drop Me', fixture('scale.musicxml'));
+  await page.reload();
+  await expect(page.getByRole('link', { name: /Keep Me/ })).toContainText('today');
+  await page.getByRole('button', { name: 'Delete Drop Me' }).click();
+  await expect(page.getByRole('link', { name: /Drop Me/ })).toBeVisible(); // nothing deleted yet
+  await page.getByRole('button', { name: 'Keep', exact: true }).click();
+  await page.getByRole('button', { name: 'Delete Drop Me' }).click();
+  await page.getByRole('group', { name: 'Delete Drop Me?' }).getByRole('button', { name: 'Delete' }).click();
+  await expect(page.getByRole('link', { name: /Drop Me/ })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: /Keep Me/ })).toBeVisible();
+  // a score that is not on this device
+  await page.goto('/score/does-not-exist');
+  await expect(page.getByRole('heading', { name: 'Score not found' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Back to library' })).toBeVisible();
+});
