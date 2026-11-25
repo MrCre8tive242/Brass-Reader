@@ -95,7 +95,9 @@ export default function Uploader() {
     setItems((cur) => [...cur, ...next]);
   }
 
+  // any change to the pages makes an earlier reading stale
   function move(i: number, d: number) {
+    setReview(null);
     setItems((cur) => {
       const j = i + d;
       if (j < 0 || j >= cur.length) return cur;
@@ -104,7 +106,7 @@ export default function Uploader() {
       return copy;
     });
   }
-  const rotate = (key: string) => setItems((cur) => cur.map((x) => (x.key === key ? { ...x, rotate: (x.rotate + 1) % 4 } : x)));
+  const rotate = (key: string) => { setReview(null); setItems((cur) => cur.map((x) => (x.key === key ? { ...x, rotate: (x.rotate + 1) % 4 } : x))); };
   const remove = (key: string) => { setItems((c) => c.filter((x) => x.key !== key)); setReview(null); };
 
   async function read(engine: 'auto' | 'audiveris' = 'auto') {

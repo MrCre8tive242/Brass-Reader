@@ -201,12 +201,13 @@ export default function ScorePage() {
   };
   const onTarget = (t: InstrumentId) => { setTarget(t); lsSet(`target:${id}`, t); };
 
-  const sourceHint = partXml ? (() => {
+  const sourceHint = useMemo(() => {
+    if (!partXml) return undefined;
     const d = detectSourceInstrument(partXml);
     return d.id === source
       ? `Detected from the music (${d.reason}). Change "Written for" if this part is for another instrument.`
       : `The music looks like ${INSTRUMENTS[d.id].name} (${d.reason}), but you chose ${INSTRUMENTS[source].name}.`;
-  })() : undefined;
+  }, [partXml, source]);
 
   // everything worth checking against the paper, each with the bar to jump to
   const checks = useMemo(() => {

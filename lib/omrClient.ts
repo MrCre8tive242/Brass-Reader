@@ -21,7 +21,7 @@ function loadImage(blob: Blob): Promise<HTMLImageElement> {
     const url = URL.createObjectURL(blob);
     const img = new Image();
     img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new OmrError('Could not read that image.', 'client')); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new OmrError('Could not open that picture. If it is a HEIC photo, save or share it as JPEG first.', 'client')); };
     img.src = url;
   });
 }
