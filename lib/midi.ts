@@ -1,10 +1,11 @@
 import { Midi } from '@tonejs/midi';
 import type { Timeline } from './timeline';
+import type { DrumHit } from './groove';
 
 const PPQ = 480;
 
 /** Standard MIDI file for a timeline. Pitches are concert (sounding). */
-export function toMidi(tl: Timeline, bpm: number, program: number, name = 'Brass Reader', tracks?: { name: string; program: number }[]): Uint8Array {
+export function toMidi(tl: Timeline, bpm: number, program: number, name = 'Brass Reader', tracks?: { name: string; program: number }[], drums?: DrumHit[]): Uint8Array {
   const midi = new Midi();
   midi.header.setTempo(bpm);
   midi.header.name = name;
@@ -37,6 +38,15 @@ export function toMidi(tl: Timeline, bpm: number, program: number, name = 'Brass
       durationTicks: Math.max(1, Math.round(e.durQ * PPQ)),
       velocity: 0.8,
     });
+  }
+  // the drums go on General MIDI channel 10 (index 9): lead drum 47, bass drum 36, cowbells 56, whistle 72
+  if (drums?.length) {
+    const d = midi.addTrack();
+    d.name = 'Drums';
+    d.channel = 9;
+    for (const h of drums) {
+      d.addNote({ midi: h.gm, ticks: Math.round(h.timeQ * PPQ), durationTicks: Math.max(1, Math.round(Math.min(h.durQ, 0.5) * PPQ)), velocity: Math.max(0.1, Math.min(1, h.vel * 0.9)) });
+    }
   }
   return midi.toArray();
 }

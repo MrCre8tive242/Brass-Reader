@@ -28,6 +28,8 @@ import { analyseAndRepair } from '@/lib/repair';
 import { Player } from '@/lib/player';
 import PracticeSheet, { Section } from '@/components/PracticeSheet';
 import LoopPanel from '@/components/LoopPanel';
+import DrumsPanel from '@/components/DrumsPanel';
+import GrooveStudio from '@/components/GrooveStudio';
 import { LoopIcon } from '@/components/Icons';
 import { DEFAULT_TRAINER, loopQ, normalizeLoop, normalizeTrainer, passLabel, type LoopRange, type Trainer } from '@/lib/loop';
 
@@ -73,6 +75,7 @@ export default function ScorePage() {
   const [pitchOn, setPitchOn] = useState(false);
   const [pitchResults, setPitchResults] = useState<(NoteResult | undefined)[]>([]);
   const [checksOpen, setChecksOpen] = useState(false);
+  const [studioOpen, setStudioOpen] = useState(false);
   const player = useRef<Player | null>(null);
   const view = useRef<ScoreViewHandle>(null);
   const measureRef = useRef(1);
@@ -538,10 +541,14 @@ export default function ScorePage() {
         <Section id="record" title="Record yourself">
           <RecordPanel scoreId={id} title={score.title} getPlayer={getPlayer} session={mic} playing={playing} onTempo={setBpm} />
         </Section>
+        <Section id="drums" title="Drums">
+          <DrumsPanel onOpenStudio={() => setStudioOpen(true)} />
+        </Section>
         <Section id="loop" title="Loop and speed trainer" open>
           <LoopPanel measureCount={measureCount} loop={normalizeLoop(loop, measureCount)} draft={loopDraft} trainer={trainer} onDraft={setLoopDraft} onLoop={changeLoop} onTrainer={changeTrainer} />
         </Section>
       </PracticeSheet>
+      {studioOpen && <GrooveStudio getCtx={() => player.current?.context ?? null} clickBpm={bpm} onClose={() => setStudioOpen(false)} onChanged={() => {}} />}
       <Transport
         playing={playing}
         measure={measure}

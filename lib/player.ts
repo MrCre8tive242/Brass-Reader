@@ -3,6 +3,8 @@ import { measureAt, slotAt, firstQ, type Timeline } from './timeline';
 import { unlockAudio, releaseAudio } from './audioUnlock';
 import { trainerBpm, type Trainer } from './loop';
 import { partGain, type MixState } from './mixer';
+import { DrumBus, type DrumSource } from './drums';
+import type { DrumHit } from './groove';
 
 export interface Click { timeQ: number; accent: boolean }
 
@@ -160,6 +162,11 @@ export class Player {
   private loadToken = 0;
   private master: GainNode;
   private clickBus: GainNode;
+  /** The drums: their own channel, fed from `drumHits` on the same clock as the notes. */
+  readonly drums: DrumBus;
+  private drumHits: DrumHit[] = [];
+  private nextDrum = 0;
+  private drumsOn = false;
 
   constructor(private ctx: AudioContext) {
     this.master = ctx.createGain();
@@ -168,6 +175,7 @@ export class Player {
     this.clickBus = ctx.createGain();
     this.clickBus.gain.value = 0.5;
     this.clickBus.connect(ctx.destination);
+    this.drums = new DrumBus(ctx, ctx.destination);
     this.voice = new SynthVoice(ctx, this.master); // placeholder until samples arrive
     // a phone call, Siri or the lock screen suspends the audio clock: stop cleanly instead of freezing mid-bar
     try {
@@ -233,6 +241,24 @@ export class Player {
 
   /** Per part: loudness, mute and solo. Takes effect for notes scheduled from now on. */
   setMix(mix: MixState[]) { this.mix = mix.map((m) => ({ ...m })); }
+
+  /**
+   * The drum hits for the whole score (quarter notes, play order) and where the sound of a recorded groove comes from.
+   * Hits are scheduled with the notes, so they follow tempo changes, seeks, loops and the count-in.
+   */
+  setDrums(hits: DrumHit[], source: DrumSource | null) {
+    this.drumHits = [...hits].sort((a, b) => a.timeQ - b.timeQ);
+    this.drums.source = source;
+    if (!this.playing) { this.nextDrum = 0; return; }
+    // carry on from the first hit not yet scheduled
+    const horizonQ = this.anchorQ + ((this.ctx.currentTime + LOOKAHEAD_S - this.anchorTime) * this.bpm) / 60;
+    const from = Math.max(horizonQ, this.minQ);
+    this.nextDrum = this.drumHits.findIndex((h) => h.timeQ >= from - 1e-6);
+    if (this.nextDrum < 0) this.nextDrum = this.drumHits.length;
+  }
+  /** Drums on or off, without losing the place. */
+  setDrumsEnabled(on: boolean) { this.drumsOn = on; if (!on) this.drums.stop(); }
+  setDrumsVolume(v: number) { this.drums.setVolume(v); }
 
   /** The audio context (the microphone is read through the same clock). */
   get context(): AudioContext { return this.ctx; }
@@ -355,7 +381,7 @@ export class Player {
     this.stopSound();
     this.setPlaying(false);
     releaseAudio();
-    try { this.master.disconnect(); this.clickBus.disconnect(); } catch { /* ignore */ }
+    try { this.master.disconnect(); this.clickBus.disconnect(); this.drums.dispose(); } catch { /* ignore */ }
   }
 
   // --- internals ---
@@ -375,6 +401,7 @@ export class Player {
     if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; }
     this.voice?.stop();
     for (const v of this.partVoices) if (v && v !== this.voice) v.stop();
+    this.drums.stop();
   }
 
   private restartFrom(q: number, withCountIn = false, lead = 0.06, newRun = false) {
@@ -407,6 +434,8 @@ export class Player {
     }
     this.nextClick = this.clicks.findIndex((c) => c.timeQ >= q - 1e-6);
     if (this.nextClick < 0) this.nextClick = this.clicks.length;
+    this.nextDrum = this.drumHits.findIndex((h) => h.timeQ >= q - 1e-6);
+    if (this.nextDrum < 0) this.nextDrum = this.drumHits.length;
     this.countInPending = countQ > 0;
     this.countInNext = 0;
     this.setPlaying(true);
@@ -493,6 +522,14 @@ export class Player {
       this.play1(e.midi, when, Math.max(0.05, durQ * spq * 0.97), e.part ?? 0);
       this.nextEvent++;
     }
+    while (this.nextDrum < this.drumHits.length) {
+      const h = this.drumHits[this.nextDrum];
+      if (h.timeQ >= endQ - 1e-6) break;
+      const t = this.timeOf(h.timeQ);
+      if (t > horizon) break;
+      if (this.drumsOn) this.drums.hit(h, Math.max(t, this.ctx.currentTime), spq, this.bpm, h.timeQ);
+      this.nextDrum++;
+    }
     if (this.metronome) {
       while (this.nextClick < this.clicks.length) {
         const c = this.clicks[this.nextClick];
@@ -528,6 +565,8 @@ export class Player {
     if (this.nextEvent < 0) this.nextEvent = this.tl.events.length;
     this.nextClick = this.clicks.findIndex((c) => c.timeQ >= sq - 1e-6);
     if (this.nextClick < 0) this.nextClick = this.clicks.length;
+    this.nextDrum = this.drumHits.findIndex((h) => h.timeQ >= sq - 1e-6);
+    if (this.nextDrum < 0) this.nextDrum = this.drumHits.length;
     this.held = [];
     for (let i = 0; i < this.nextEvent; i++) {
       const e = this.tl.events[i];
