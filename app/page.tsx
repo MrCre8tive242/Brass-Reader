@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { deleteScore, listScores, type SavedScore } from '@/lib/library';
 import { INSTRUMENTS } from '@/lib/instruments';
+import Uploader from '@/components/Uploader';
 
 export default function Home() {
   const [scores, setScores] = useState<SavedScore[] | null>(null);
@@ -13,6 +14,8 @@ export default function Home() {
     <main className="page">
       <h1 className="brand">Brass Reader</h1>
       <p className="muted">Scan your sheet music, hear it, and play your part on any brass instrument.</p>
+
+      <Uploader />
 
       <h2>Library</h2>
       {scores === null && <p className="muted">Loading…</p>}
@@ -28,7 +31,6 @@ export default function Home() {
           </li>
         ))}
       </ul>
-      <p className="disclaimer">Reading is automatic. Check the notes against your sheet.</p>
     </main>
   );
 }
