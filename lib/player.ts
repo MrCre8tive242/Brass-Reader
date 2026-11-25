@@ -1,31 +1,71 @@
 import { INSTRUMENTS, type InstrumentId } from './instruments';
 import { measureAt, slotAt, firstQ, type Timeline } from './timeline';
+import { unlockAudio, releaseAudio } from './audioUnlock';
 
 export interface Click { timeQ: number; accent: boolean }
+
+type Sig = { beats: number; beatType: number };
+
+function sigAt(tl: Timeline, written: number): Sig {
+  let sig: Sig = { beats: 4, beatType: 4 };
+  for (const s of tl.timeSigs) { if (s.measure <= written) sig = s; else break; }
+  return sig;
+}
+
+/** Length of one metronome beat in quarters: the dotted quarter in 6/8, 9/8, 12/8 (felt in two, three, four). */
+export function beatLengthQ(sig: Sig): number {
+  return sig.beatType === 8 && sig.beats % 3 === 0 && sig.beats > 3 ? 1.5 : 4 / sig.beatType;
+}
 
 /** Metronome clicks for every beat of the score (beat unit follows the time signature). */
 export function buildClicks(tl: Timeline): Click[] {
   const out: Click[] = [];
-  let sigIdx = -1;
   for (let m = 0; m < tl.measureStartsQ.length; m++) {
-    const written = tl.order[m] ?? m + 1;
-    sigIdx = -1;
-    while (sigIdx + 1 < tl.timeSigs.length && tl.timeSigs[sigIdx + 1].measure <= written) sigIdx++;
-    const sig = sigIdx >= 0 ? tl.timeSigs[sigIdx] : { beats: 4, beatType: 4 };
-    const beatQ = 4 / sig.beatType;
+    const sig = sigAt(tl, tl.order[m] ?? m + 1);
+    const beatQ = beatLengthQ(sig);
+    const nominal = (4 * sig.beats) / sig.beatType;
     const start = tl.measureStartsQ[m];
     const end = m + 1 < tl.measureStartsQ.length ? tl.measureStartsQ[m + 1] : tl.totalQ;
-    for (let k = 0; start + k * beatQ < end - 1e-6; k++) out.push({ timeQ: start + k * beatQ, accent: k === 0 });
+    // a pickup is the END of a bar: its beats line up with the next downbeat and none of them is beat one
+    const lead = m === 0 && end - start < nominal - 1e-6 ? nominal - (end - start) : 0;
+    for (let k = Math.ceil(lead / beatQ - 1e-6); k * beatQ - lead < end - start - 1e-6; k++) {
+      out.push({ timeQ: start + k * beatQ - lead, accent: k === 0 });
+    }
   }
   return out;
 }
 
-/** Length in quarters of written bar `measure` (used for the count-in). */
+/** Length in quarters of written bar `measure` (the first time it is played). */
 export function barLengthQ(tl: Timeline, measure: number): number {
   const slot = tl.order.indexOf(Math.max(1, Math.min(tl.measureCount, measure)));
   const i = Math.max(0, slot);
   const end = i + 1 < tl.measureStartsQ.length ? tl.measureStartsQ[i + 1] : tl.totalQ;
   return end - tl.measureStartsQ[i];
+}
+
+/**
+ * Count-in clicks before starting at written bar `measure`, as offsets in quarters before the start (most
+ * negative first). One full bar; before a pickup the count runs up to the pickup ("1 2 3" then the pickup on 4),
+ * with a whole extra bar in front if that would be fewer than two clicks.
+ */
+export function countInClicks(tl: Timeline, measure: number): { offsetQ: number; accent: boolean }[] {
+  const sig = sigAt(tl, measure);
+  const beatQ = beatLengthQ(sig);
+  const nominal = (4 * sig.beats) / sig.beatType;
+  const len = barLengthQ(tl, measure);
+  const pickup = measure === 1 && len < nominal - 1e-6;
+  let total = pickup ? nominal - len : nominal;
+  if (pickup && Math.round(total / beatQ) < 2) total += nominal;
+  const out: { offsetQ: number; accent: boolean }[] = [];
+  // beat positions are counted from the downbeat of the (first) counted bar
+  const barStart = pickup ? -(Math.ceil(total / nominal - 1e-6) * nominal - len) : -nominal;
+  for (let k = 0; barStart + k * beatQ < -1e-6; k++) {
+    const off = barStart + k * beatQ;
+    if (off < -total - 1e-6) continue;
+    const inBar = ((k * beatQ) % nominal + nominal) % nominal;
+    out.push({ offsetQ: off, accent: inBar < 1e-6 });
+  }
+  return out;
 }
 
 interface Voice {
@@ -82,6 +122,8 @@ export class Player {
   onPosition: (q: number, measure: number, offsetQ: number) => void = () => {};
   onEnd: () => void = () => {};
   onState: (playing: boolean) => void = () => {};
+  /** The browser refused to start the audio (no user gesture, or the phone interrupted it). */
+  onBlocked: () => void = () => {};
   /** Which sound engine is active after load(). */
   engine: 'soundfont' | 'synth' | 'none' = 'none';
 
@@ -110,6 +152,10 @@ export class Player {
     this.clickBus.gain.value = 0.5;
     this.clickBus.connect(ctx.destination);
     this.voice = new SynthVoice(ctx, this.master); // placeholder until samples arrive
+    // a phone call, Siri or the lock screen suspends the audio clock: stop cleanly instead of freezing mid-bar
+    try {
+      ctx.addEventListener?.('statechange', () => { if (this.playing && this.ctx.state !== 'running') this.pause(); });
+    } catch { /* ignore */ }
   }
 
   get isPlaying() { return this.playing; }
@@ -122,8 +168,11 @@ export class Player {
     let voice: Voice | null = null;
     let engine: 'soundfont' | 'synth' = 'synth';
     try {
-      const { Soundfont } = await import('smplr');
-      const inst = Soundfont(this.ctx, { instrument: INSTRUMENTS[id].sample, kit: 'MusyngKite', destination: this.master });
+      const { Soundfont, CacheStorage } = await import('smplr');
+      // keep downloaded samples in the browser cache: rehearsal rooms often have no signal
+      let storage: InstanceType<typeof CacheStorage> | undefined;
+      try { storage = new CacheStorage('brass-reader-sounds'); } catch { storage = undefined; }
+      const inst = Soundfont(this.ctx, { instrument: INSTRUMENTS[id].sample, kit: 'MusyngKite', destination: this.master, ...(storage ? { storage } : {}) });
       await Promise.race([
         inst.ready,
         new Promise((_, rej) => setTimeout(() => rej(new Error('soundfont load timeout')), LOAD_TIMEOUT_MS)),
@@ -166,6 +215,16 @@ export class Player {
   /** Number of written bars. */
   get measureCount(): number { return this.tl?.measureCount ?? 0; }
 
+  /**
+   * Seconds between scheduling a sound and hearing it (audio hardware, Bluetooth speakers). The cursor is drawn
+   * this much behind the scheduling clock so that it matches what is heard.
+   */
+  outputDelay(): number {
+    const c = this.ctx as AudioContext & { outputLatency?: number; baseLatency?: number };
+    const d = (Number.isFinite(c.outputLatency) ? c.outputLatency! : 0) + (Number.isFinite(c.baseLatency) ? c.baseLatency! : 0);
+    return Math.max(0, Math.min(0.5, d));
+  }
+
   /** Current position in quarter notes, derived from the audio clock while playing. */
   currentQ(): number {
     if (!this.playing) return this.posQ;
@@ -173,19 +232,27 @@ export class Player {
     return Math.max(this.startQ, Math.min(q, this.tl?.totalQ ?? q));
   }
 
-  async play(fromMeasure?: number) {
-    if (!this.tl) return;
+  /**
+   * Start playing. Must be called from a tap/click/key handler (browsers only start audio there).
+   * Returns false if the browser kept the audio blocked.
+   */
+  async play(fromMeasure?: number): Promise<boolean> {
+    if (!this.tl) return false;
+    unlockAudio(this.ctx); // synchronously, still inside the gesture
     if (this.ctx.state !== 'running') { try { await this.ctx.resume(); } catch { /* ignore */ } }
+    if (this.ctx.state !== 'running') { this.onBlocked(); return false; }
     let q = fromMeasure ? firstQ(this.tl, fromMeasure) : this.posQ;
     if (q >= this.tl.totalQ - 1e-6) q = 0;
     this.restartFrom(q, this.countIn);
+    return true;
   }
 
   pause() {
     if (!this.playing) return;
-    this.posQ = this.currentQ();
+    this.posQ = Math.max(this.startQ, this.currentQ());
     this.stopSound();
     this.setPlaying(false);
+    releaseAudio();
     this.emit(this.posQ);
   }
 
@@ -222,6 +289,7 @@ export class Player {
   dispose() {
     this.stopSound();
     this.setPlaying(false);
+    releaseAudio();
     try { this.master.disconnect(); this.clickBus.disconnect(); } catch { /* ignore */ }
   }
 
@@ -248,7 +316,8 @@ export class Player {
     this.stopSound();
     const now = this.ctx.currentTime;
     const m = measureAt(this.tl, q);
-    const countQ = withCountIn ? barLengthQ(this.tl, m) : 0;
+    this.countClicks = withCountIn ? countInClicks(this.tl, m) : [];
+    const countQ = this.countClicks.length ? -this.countClicks[0].offsetQ : 0;
     this.startQ = q;
     this.anchorQ = q - countQ;
     this.anchorTime = now + lead;
@@ -264,7 +333,6 @@ export class Player {
     }
     this.nextClick = this.clicks.findIndex((c) => c.timeQ >= q - 1e-6);
     if (this.nextClick < 0) this.nextClick = this.clicks.length;
-    this.countInQ = countQ;
     this.countInPending = countQ > 0;
     this.countInNext = 0;
     this.setPlaying(true);
@@ -273,7 +341,8 @@ export class Player {
     const frame = () => {
       if (!this.playing) return;
       const cq = this.currentQ();
-      this.emit(cq);
+      // show what is being HEARD now, not what was just scheduled
+      this.emit(Math.max(this.startQ, cq - (this.outputDelay() * this.bpm) / 60));
       if (this.tl && cq >= this.tl.totalQ - 1e-6 && this.nextEvent >= this.tl.events.length) {
         this.finish();
         return;
@@ -284,17 +353,18 @@ export class Player {
   }
 
   private held: { midi: number; remQ: number }[] = [];
-  private countInQ = 0;
+  private countClicks: { offsetQ: number; accent: boolean }[] = [];
   private countInPending = false;
   private countInNext = 0;
 
   private finish() {
     const end = this.tl?.totalQ ?? 0;
+    void end;
     this.stopSound();
     this.posQ = 0;
     this.setPlaying(false);
+    releaseAudio();
     this.emit(this.posQ);
-    void end;
     this.onEnd();
   }
 
@@ -306,11 +376,11 @@ export class Player {
     const spq = 60 / this.bpm;
     // count-in clicks (always audible) before the start position
     if (this.countInPending) {
-      const beatQ = this.tl.timeSigs.length ? 4 / (this.tl.timeSigs.filter((s) => s.measure <= measureAt(this.tl!, this.startQ)).pop()?.beatType ?? 4) : 1;
-      while (this.countInNext * beatQ < this.countInQ - 1e-6) {
-        const t = this.anchorTime + this.countInNext * beatQ * spq;
+      while (this.countInNext < this.countClicks.length) {
+        const c = this.countClicks[this.countInNext];
+        const t = this.timeOf(this.startQ + c.offsetQ);
         if (t > horizon) return;
-        this.click(t, this.countInNext === 0);
+        this.click(Math.max(t, this.ctx.currentTime), c.accent);
         this.countInNext++;
       }
       this.countInPending = false;

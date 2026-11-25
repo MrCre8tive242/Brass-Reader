@@ -99,3 +99,175 @@ describe('Player restarts keep held notes sounding', () => {
     p.dispose();
   });
 });
+
+// ---- metronome and count-in follow the music ----
+import { beatLengthQ, countInClicks } from '@/lib/player';
+import { notationToMusicXml, parseNotation } from '@/lib/omrNotation';
+import { unlockAudio, releaseAudio, isIos, silentWav } from '@/lib/audioUnlock';
+
+const tlOf = (t: string) => buildTimeline(notationToMusicXml(parseNotation(t)).xml);
+
+describe('beats', () => {
+  it('compound time is felt in dotted quarters', () => {
+    expect(beatLengthQ({ beats: 6, beatType: 8 })).toBe(1.5);
+    expect(beatLengthQ({ beats: 12, beatType: 8 })).toBe(1.5);
+    expect(beatLengthQ({ beats: 3, beatType: 8 })).toBe(0.5);
+    expect(beatLengthQ({ beats: 4, beatType: 4 })).toBe(1);
+    expect(beatLengthQ({ beats: 2, beatType: 2 })).toBe(2);
+    const c = buildClicks(tlOf('time: 6/8\n1: C5:q. C5:q.\n2: C5:h.'));
+    expect(c.map((x) => [x.timeQ, x.accent])).toEqual([[0, true], [1.5, false], [3, true], [4.5, false]]);
+  });
+  it('a pickup bar clicks on the beat without a false downbeat', () => {
+    const c = buildClicks(tlOf('time: 4/4\n0: G4:e A4:q\n1: C5:w'));
+    // pickup of 1.5 beats: starts half a beat before beat 4
+    expect(c.map((x) => [x.timeQ, x.accent])).toEqual([[0.5, false], [1.5, true], [2.5, false], [3.5, false], [4.5, false]]);
+  });
+});
+
+describe('count-in', () => {
+  it('is one bar of beats with an accent on one', () => {
+    const tl = tlOf('time: 3/4\n1: C5:h.\n2: C5:h.');
+    expect(countInClicks(tl, 2)).toEqual([{ offsetQ: -3, accent: true }, { offsetQ: -2, accent: false }, { offsetQ: -1, accent: false }]);
+  });
+  it('before a pickup it counts up to the pickup: "1 2 3" then the pickup on 4', () => {
+    const tl = tlOf('time: 4/4\n0: G4:q\n1: C5:w');
+    expect(countInClicks(tl, 1)).toEqual([{ offsetQ: -3, accent: true }, { offsetQ: -2, accent: false }, { offsetQ: -1, accent: false }]);
+  });
+  it('a long pickup gets a whole extra bar so there are at least two clicks', () => {
+    const tl = tlOf('time: 4/4\n0: G4:h.\n1: C5:w');
+    expect(countInClicks(tl, 1).map((c) => [c.offsetQ, c.accent])).toEqual([[-5, true], [-4, false], [-3, false], [-2, false], [-1, true]]);
+  });
+  it('6/8 counts two', () => {
+    const tl = tlOf('time: 6/8\n1: C5:h.\n2: C5:h.');
+    expect(countInClicks(tl, 1).map((c) => c.offsetQ)).toEqual([-3, -1.5]);
+  });
+});
+
+describe('Player and the audio clock', () => {
+  beforeEach(() => { vi.stubGlobal('requestAnimationFrame', () => 1); vi.stubGlobal('cancelAnimationFrame', () => {}); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+  const tl = () => tlOf('time: 4/4\n1: C5:w\n2: D5:w');
+
+  it('does not start, and says so, when the browser keeps the audio blocked', async () => {
+    const ctx = fakeCtx();
+    (ctx as unknown as { state: string }).state = 'suspended';
+    const p = new Player(ctx);
+    p.setTimeline(tl());
+    const blocked = vi.fn();
+    p.onBlocked = blocked;
+    expect(await p.play()).toBe(false);
+    expect(p.isPlaying).toBe(false);
+    expect(blocked).toHaveBeenCalledTimes(1);
+  });
+  it('resumes a suspended context from the Play gesture', async () => {
+    const ctx = fakeCtx();
+    const c = ctx as unknown as { state: string; resume: () => Promise<void> };
+    c.state = 'suspended';
+    c.resume = async () => { c.state = 'running'; };
+    const p = new Player(ctx);
+    p.setTimeline(tl());
+    expect(await p.play()).toBe(true);
+    expect(p.isPlaying).toBe(true);
+    p.dispose();
+  });
+  it('pauses when the phone interrupts the audio (call, lock screen)', async () => {
+    const ctx = fakeCtx();
+    let onState: (() => void) | undefined;
+    (ctx as unknown as { addEventListener: (t: string, f: () => void) => void }).addEventListener = (_t, f) => { onState = f; };
+    const p = new Player(ctx);
+    p.setTimeline(tl());
+    await p.play();
+    ctx.currentTime = 1;
+    (ctx as unknown as { state: string }).state = 'interrupted';
+    onState!();
+    expect(p.isPlaying).toBe(false);
+  });
+  it('draws the cursor where the sound is, behind the scheduling clock by the output delay', async () => {
+    const ctx = fakeCtx();
+    (ctx as unknown as { outputLatency: number; baseLatency: number }).outputLatency = 0.2;
+    (ctx as unknown as { baseLatency: number }).baseLatency = 0.05;
+    let frame: (() => void) | undefined;
+    vi.stubGlobal('requestAnimationFrame', (f: () => void) => { frame = f; return 1; });
+    const p = new Player(ctx);
+    p.setTimeline(tl());
+    p.setBpm(120);
+    const seen: number[] = [];
+    p.onPosition = (q) => seen.push(q);
+    await p.play();
+    ctx.currentTime = 0.06 + 1; // 2 quarters scheduled
+    frame!();
+    expect(p.outputDelay()).toBeCloseTo(0.25);
+    expect(seen[seen.length - 1]).toBeCloseTo(1.5, 5); // 0.25 s = half a quarter behind
+    expect(p.currentQ()).toBeCloseTo(2, 5);
+    p.dispose();
+  });
+  it('count-in clicks happen before the first note and the position waits', async () => {
+    const ctx = fakeCtx();
+    const p = new Player(ctx);
+    p.setTimeline(tl());
+    p.setBpm(60);
+    p.countIn = true;
+    const clicks: number[] = [];
+    (p as unknown as { click: (t: number) => void }).click = (t) => clicks.push(t);
+    const starts: number[] = [];
+    (p as unknown as { voice: unknown }).voice = { start: (n: { time: number }) => starts.push(n.time), stop() {} };
+    await p.play();
+    for (let t = 0; t <= 5; t += 0.2) { ctx.currentTime = t; (p as unknown as { tick(): void }).tick(); if (t < 4) expect(p.currentQ()).toBe(0); }
+    expect(clicks.slice(0, 4).map((x) => Math.round((x - 0.06) * 100) / 100)).toEqual([0, 1, 2, 3]);
+    expect(starts[0]).toBeCloseTo(4.06, 2);
+    p.dispose();
+  });
+});
+
+describe('unlockAudio', () => {
+  afterEach(() => { vi.unstubAllGlobals(); releaseAudio(); });
+  const ctxWithBuffers = () => {
+    const started: number[] = [];
+    const ctx = { destination: {}, createBuffer: () => ({}), createBufferSource: () => ({ connect() {}, start: (t: number) => started.push(t), buffer: null }) } as unknown as AudioContext;
+    return { ctx, started };
+  };
+  it('recognises iPhones and iPads (including iPad "desktop" mode)', () => {
+    expect(isIos({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)', maxTouchPoints: 5 })).toBe(true);
+    expect(isIos({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', maxTouchPoints: 5 })).toBe(true);
+    expect(isIos({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', maxTouchPoints: 0 })).toBe(false);
+    expect(isIos({ userAgent: 'Mozilla/5.0 (Linux; Android 14)', maxTouchPoints: 5 })).toBe(false);
+  });
+  it('marks the page as media playback where the browser supports it (silent switch no longer mutes)', () => {
+    const session = { type: 'auto' };
+    vi.stubGlobal('navigator', { userAgent: 'iPhone', maxTouchPoints: 5, audioSession: session });
+    const made: string[] = [];
+    vi.stubGlobal('document', { createElement: (t: string) => { made.push(t); return {}; } });
+    const { ctx, started } = ctxWithBuffers();
+    unlockAudio(ctx);
+    unlockAudio(ctx);
+    expect(session.type).toBe('playback');
+    expect(started).toEqual([0]); // primed once per context
+    expect(made).toEqual([]); // no silent loop needed
+  });
+  it('falls back to a silent looping audio element on older iPhones, and stops it on release', () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)', maxTouchPoints: 5 });
+    const el = { loop: false, src: '', preload: '', attrs: {} as Record<string, string>, plays: 0, pauses: 0, setAttribute(k: string, v: string) { this.attrs[k] = v; }, play() { this.plays++; return Promise.resolve(); }, pause() { this.pauses++; } };
+    vi.stubGlobal('document', { createElement: () => el });
+    vi.stubGlobal('URL', { createObjectURL: () => 'blob:silence' });
+    unlockAudio(ctxWithBuffers().ctx);
+    expect(el).toMatchObject({ loop: true, src: 'blob:silence', plays: 1 });
+    expect(el.attrs).toHaveProperty('playsinline');
+    releaseAudio();
+    expect(el.pauses).toBe(1);
+  });
+  it('does nothing special on other devices', () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Linux; Android 14)', maxTouchPoints: 5 });
+    const made: string[] = [];
+    vi.stubGlobal('document', { createElement: (t: string) => { made.push(t); return {}; } });
+    unlockAudio(ctxWithBuffers().ctx);
+    expect(made).toEqual([]);
+  });
+  it('the silent clip is a valid little WAV file', () => {
+    const w = silentWav(0.5, 8000);
+    expect(String.fromCharCode(...w.slice(0, 4))).toBe('RIFF');
+    expect(String.fromCharCode(...w.slice(8, 12))).toBe('WAVE');
+    expect(w.length).toBe(44 + 4000);
+    expect(new DataView(w.buffer).getUint32(40, true)).toBe(4000);
+    expect(new Set(w.slice(44))).toEqual(new Set([128]));
+  });
+});
