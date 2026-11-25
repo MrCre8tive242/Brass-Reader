@@ -5,6 +5,9 @@ interface Props {
   playing: boolean;
   measure: number;
   measureCount: number;
+  /** Printed bar label ("Pickup" or a number) and the last printed bar number; default to measure/measureCount. */
+  barLabel?: string;
+  barTotal?: number;
   bpm: number;
   metronome: boolean;
   countIn: boolean;
@@ -39,7 +42,9 @@ export default function Transport(p: Props) {
           {p.playing ? '⏸' : '▶'}
         </button>
         <button type="button" className="tbtn" onClick={p.onNext} aria-label="Next bar" disabled={!p.ready}>⏭</button>
-        <div className="barcount" data-testid="bar-counter" aria-live="off">Bar {p.measure} / {p.measureCount}</div>
+        <div className="barcount" data-testid="bar-counter" aria-live="off">
+          {p.barLabel === 'Pickup' ? 'Pickup' : `Bar ${p.barLabel ?? p.measure} / ${p.barTotal ?? p.measureCount}`}
+        </div>
       </div>
       <div className="row opts">
         <div className="bpm">

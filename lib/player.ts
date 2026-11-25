@@ -1,5 +1,5 @@
 import { INSTRUMENTS, type InstrumentId } from './instruments';
-import { measureAt, type Timeline } from './timeline';
+import { measureAt, slotAt, firstQ, type Timeline } from './timeline';
 
 export interface Click { timeQ: number; accent: boolean }
 
@@ -8,7 +8,9 @@ export function buildClicks(tl: Timeline): Click[] {
   const out: Click[] = [];
   let sigIdx = -1;
   for (let m = 0; m < tl.measureStartsQ.length; m++) {
-    while (sigIdx + 1 < tl.timeSigs.length && tl.timeSigs[sigIdx + 1].measure <= m + 1) sigIdx++;
+    const written = tl.order[m] ?? m + 1;
+    sigIdx = -1;
+    while (sigIdx + 1 < tl.timeSigs.length && tl.timeSigs[sigIdx + 1].measure <= written) sigIdx++;
     const sig = sigIdx >= 0 ? tl.timeSigs[sigIdx] : { beats: 4, beatType: 4 };
     const beatQ = 4 / sig.beatType;
     const start = tl.measureStartsQ[m];
@@ -18,9 +20,10 @@ export function buildClicks(tl: Timeline): Click[] {
   return out;
 }
 
-/** Length in quarters of the bar before `measure` (used for the count-in). */
+/** Length in quarters of written bar `measure` (used for the count-in). */
 export function barLengthQ(tl: Timeline, measure: number): number {
-  const i = Math.max(0, Math.min(tl.measureStartsQ.length - 1, measure - 1));
+  const slot = tl.order.indexOf(Math.max(1, Math.min(tl.measureCount, measure)));
+  const i = Math.max(0, slot);
   const end = i + 1 < tl.measureStartsQ.length ? tl.measureStartsQ[i + 1] : tl.totalQ;
   return end - tl.measureStartsQ[i];
 }
@@ -75,7 +78,8 @@ const LOAD_TIMEOUT_MS = 12000;
 export class Player {
   metronome = false;
   countIn = false;
-  onPosition: (q: number, measure: number) => void = () => {};
+  /** `measure` is the WRITTEN bar; `offsetQ` the distance in quarters from the start of the bar being played. */
+  onPosition: (q: number, measure: number, offsetQ: number) => void = () => {};
   onEnd: () => void = () => {};
   onState: (playing: boolean) => void = () => {};
   /** Which sound engine is active after load(). */
@@ -148,13 +152,14 @@ export class Player {
     this.tl = tl;
     this.clicks = buildClicks(tl);
     // keep the user's place by bar number when the score is re-derived (instrument switch)
-    this.posQ = tl.measureStartsQ[Math.min(m, tl.measureStartsQ.length) - 1] ?? 0;
+    this.posQ = firstQ(tl, m);
     if (wasPlaying) this.restartFrom(this.posQ, false);
     else this.emit(this.posQ);
   }
 
   get measure(): number { return this.tl ? measureAt(this.tl, this.currentQ()) : 1; }
-  get measureCount(): number { return this.tl?.measureStartsQ.length ?? 0; }
+  /** Number of written bars. */
+  get measureCount(): number { return this.tl?.measureCount ?? 0; }
 
   /** Current position in quarter notes, derived from the audio clock while playing. */
   currentQ(): number {
@@ -166,7 +171,7 @@ export class Player {
   async play(fromMeasure?: number) {
     if (!this.tl) return;
     if (this.ctx.state !== 'running') { try { await this.ctx.resume(); } catch { /* ignore */ } }
-    let q = fromMeasure ? this.tl.measureStartsQ[fromMeasure - 1] ?? 0 : this.posQ;
+    let q = fromMeasure ? firstQ(this.tl, fromMeasure) : this.posQ;
     if (q >= this.tl.totalQ - 1e-6) q = 0;
     this.restartFrom(q, this.countIn);
   }
@@ -179,10 +184,20 @@ export class Player {
     this.emit(this.posQ);
   }
 
+  /** Jump to the first time written bar `measure` is played. */
   seek(measure: number) {
     if (!this.tl) return;
-    const m = Math.max(1, Math.min(this.tl.measureStartsQ.length, measure));
-    const q = this.tl.measureStartsQ[m - 1];
+    this.seekQ(firstQ(this.tl, measure));
+  }
+
+  /** Move by played bars (follows repeats): -1 previous, +1 next. */
+  stepBar(delta: number) {
+    if (!this.tl) return;
+    const slot = Math.max(0, Math.min(this.tl.measureStartsQ.length - 1, slotAt(this.tl, this.currentQ()) + delta));
+    this.seekQ(this.tl.measureStartsQ[slot]);
+  }
+
+  private seekQ(q: number) {
     if (this.playing) this.restartFrom(q, false);
     else { this.posQ = q; this.emit(q); }
   }
@@ -211,7 +226,9 @@ export class Player {
   }
 
   private emit(q: number) {
-    if (this.tl) this.onPosition(q, measureAt(this.tl, q));
+    if (!this.tl) return;
+    const slot = slotAt(this.tl, q);
+    this.onPosition(q, this.tl.order[slot] ?? 1, Math.max(0, q - (this.tl.measureStartsQ[slot] ?? 0)));
   }
 
   private stopSound() {

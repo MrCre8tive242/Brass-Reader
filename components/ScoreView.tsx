@@ -3,7 +3,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 
 export interface ScoreViewHandle {
   /** Move the cursor + bar highlight to quarter-note position q. */
-  setPosition: (q: number, measure: number) => void;
+  setPosition: (q: number, measure: number, offsetQ?: number) => void;
 }
 
 interface Props {
@@ -13,7 +13,8 @@ interface Props {
   onError?: (msg: string) => void;
 }
 
-interface Step { q: number; measure: number }
+/** First time OSMD's cursor visits a position: `idx` = how many iterator steps from the start. */
+interface Step { off: number; idx: number }
 interface Box { x: number; y: number; w: number; h: number }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -26,10 +27,11 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, o
   const host = useRef<HTMLDivElement>(null);
   const hl = useRef<HTMLDivElement>(null);
   const osmdRef = useRef<Osmd>(null);
-  const steps = useRef<Step[]>([]);
+  const steps = useRef<Step[][]>([]); // per written bar (1-based), sorted by offset
+  const stepCount = useRef(0);
   const boxes = useRef<Box[]>([]);
   const cur = useRef(-1);
-  const lastPos = useRef<{ q: number; measure: number }>({ q: 0, measure: 1 });
+  const lastPos = useRef<{ q: number; measure: number; off: number }>({ q: 0, measure: 1, off: 0 });
   const lastSystemY = useRef(-1);
   const [busy, setBusy] = useState(true);
   const seekRef = useRef(onSeekMeasure);
@@ -39,18 +41,28 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, o
     const c = osmd.cursor;
     c.show();
     c.reset();
-    const out: Step[] = [];
+    const byBar: Step[][] = [];
+    const seen = new Set<string>();
     let guard = 0;
+    let idx = 0;
+    // OSMD's iterator follows repeats itself; keep only the first visit of every position
+    // (the player decides the play order, we only need "where is bar m at offset o").
     while (!c.iterator.EndReached && guard++ < 200000) {
-      const q = c.iterator.currentTimeStamp.RealValue * 4;
-      const measure = c.iterator.CurrentMeasureIndex + 1;
-      const prev = out[out.length - 1];
-      if (prev && q <= prev.q + 1e-9) break; // repeat jump or duplicate: stop at first pass
-      out.push({ q, measure });
-      c.next();
+      const m = c.iterator.CurrentMeasureIndex + 1;
+      const startQ = (c.iterator.CurrentMeasure?.AbsoluteTimestamp?.RealValue ?? 0) * 4;
+      const off = Math.max(0, c.iterator.currentTimeStamp.RealValue * 4 - startQ);
+      const key = `${m}:${Math.round(off * 1000)}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        (byBar[m] ??= []).push({ off, idx });
+      }
+      c.iterator.moveToNext();
+      idx++;
     }
+    for (const list of byBar) list?.sort((a, b) => a.off - b.off);
     c.reset();
-    steps.current = out;
+    steps.current = byBar;
+    stepCount.current = idx;
     cur.current = 0;
   }
 
@@ -74,18 +86,30 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, o
     boxes.current = list;
   }
 
-  function place(q: number, measure: number, scroll: boolean) {
-    lastPos.current = { q, measure };
+  /** Cursor iterator index for written bar `measure` at `offsetQ` into it. */
+  function stepFor(measure: number, offsetQ: number): number {
+    const by = steps.current;
+    for (let m = Math.min(measure, by.length - 1); m >= 1; m--) {
+      const list = by[m];
+      if (!list?.length) continue;
+      if (m !== measure) return list[list.length - 1].idx; // empty bar: stay on the last step before it
+      let pick = list[0];
+      for (const st of list) if (st.off <= offsetQ + 1e-6) pick = st; else break;
+      return pick.idx;
+    }
+    return 0;
+  }
+
+  function place(q: number, measure: number, scroll: boolean, offsetQ = 0) {
+    lastPos.current = { q, measure, off: offsetQ };
     const osmd = osmdRef.current;
-    if (!osmd || !steps.current.length) return;
-    const s = steps.current;
-    // last step with q <= target
-    let lo = 0, hi = s.length - 1;
-    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (s[mid].q <= q + 1e-6) lo = mid; else hi = mid - 1; }
+    if (!osmd || !stepCount.current) return;
+    const target = stepFor(measure, offsetQ);
     const c = osmd.cursor;
-    if (lo !== cur.current) {
-      if (lo < cur.current) { c.reset(); cur.current = 0; }
-      while (cur.current < lo) { c.next(); cur.current++; }
+    if (target !== cur.current) {
+      if (target < cur.current) { c.reset(); cur.current = 0; }
+      while (cur.current < target) { c.iterator.moveToNext(); cur.current++; }
+      c.update();
     }
     // highlight the current bar
     const b = boxes.current[measure - 1];
@@ -113,7 +137,7 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, o
     }
   }
 
-  useImperativeHandle(ref, () => ({ setPosition: (q, m) => place(q, m, true) }), []);
+  useImperativeHandle(ref, () => ({ setPosition: (q, m, off) => place(q, m, true, off ?? 0) }), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -132,9 +156,9 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, o
       measureBoxes(osmd);
       collect(osmd);
       lastW = w;
-      const { q, measure } = lastPos.current;
+      const { q, measure, off } = lastPos.current;
       cur.current = 0;
-      place(q, measure, false);
+      place(q, measure, false, off);
     }
 
     (async () => {
@@ -156,7 +180,7 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, o
         await renderAll(true);
         if (cancelled) return;
         setBusy(false);
-        onReady?.({ measureCount: steps.current.length ? Math.max(...steps.current.map((s) => s.measure)) : 0 });
+        onReady?.({ measureCount: Math.max(0, steps.current.length - 1) });
         if (!ro && wrap.current) {
           ro = new ResizeObserver(() => {
             const w = wrap.current?.clientWidth ?? 0;

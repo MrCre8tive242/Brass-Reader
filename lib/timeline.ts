@@ -8,15 +8,158 @@ export interface TimelineEvent {
   durQ: number;
   /** SOUNDING (concert) MIDI pitch: the part's <transpose> is applied. */
   midi: number;
-  /** 1-based measure index. */
+  /** 1-based WRITTEN measure index (for the cursor, bar highlight and bar counter). `timeQ` is in play order. */
   measure: number;
 }
 
 export interface Timeline {
   events: TimelineEvent[];
+  /** Start (quarters, play order) of every played bar. With repeats this has more entries than the score has bars. */
   measureStartsQ: number[];
   totalQ: number;
+  /** `measure` is the written bar index. */
   timeSigs: { measure: number; beats: number; beatType: number }[];
+  /** Play order: written bar (1-based) for each played bar, i.e. repeats and endings unrolled. */
+  order: number[];
+  /** Number of written bars. */
+  measureCount: number;
+  /** Display label per written bar: "Pickup" for an anacrusis, otherwise the printed bar number. */
+  barLabels: string[];
+  /** Highest printed bar number (shown as the total in "Bar n / total"). */
+  barTotal: number;
+  /** True if the play order differs from the written order. */
+  hasRepeats: boolean;
+}
+
+/** Per written bar: repeat / ending / jump markup. */
+export interface MeasureFlow {
+  forward?: boolean;
+  backward?: boolean;
+  times?: number;
+  endings?: number[] | null;
+  segno?: string;
+  coda?: string;
+  tocoda?: string;
+  dacapo?: boolean;
+  dalsegno?: string;
+  fine?: boolean;
+}
+
+/**
+ * Unroll repeats, volta endings and simple D.C./D.S. al Fine/Coda into a play order.
+ * Returns 0-based written bar indices.
+ */
+export function unrollMeasures(flow: MeasureFlow[]): number[] {
+  const n = flow.length;
+  const out: number[] = [];
+  let maxEnding = 0;
+  for (const m of flow) for (const e of m.endings ?? []) maxEnding = Math.max(maxEnding, e);
+  const find = (key: 'segno' | 'coda', v: string) => flow.findIndex((m) => m[key] === v);
+  let i = 0, pass = 1, repeatStart = 0;
+  let jumped = false, repeatsOff = false, byJump = false;
+  const limit = n * 40 + 100;
+  while (i < n && out.length < limit) {
+    const m = flow[i];
+    if (!m.endings && i > 0 && flow[i - 1].endings && !byJump) { pass = 1; repeatStart = i; }
+    if (m.endings) {
+      const ok = repeatsOff ? m.endings.includes(maxEnding) : m.endings.includes(pass);
+      if (!ok) { i++; continue; }
+    }
+    if (m.forward && !byJump && !repeatsOff) { repeatStart = i; pass = 1; }
+    byJump = false;
+    out.push(i);
+    if (jumped && m.fine) break;
+    if (jumped && m.tocoda) {
+      const c = find('coda', m.tocoda);
+      if (c >= 0 && c !== i) { i = c; byJump = true; continue; }
+    }
+    if (m.backward && !repeatsOff) {
+      if (pass < (m.times ?? 2)) { pass++; i = repeatStart; byJump = true; continue; }
+      pass = 1; repeatStart = i + 1;
+    }
+    if (!jumped && (m.dacapo || m.dalsegno)) {
+      const t = m.dacapo ? 0 : find('segno', m.dalsegno!);
+      if (t >= 0) { jumped = true; repeatsOff = true; i = t; byJump = true; continue; }
+    }
+    i++;
+  }
+  return out;
+}
+
+function parseEndingNumbers(s: string | null): number[] {
+  const out: number[] = [];
+  for (const part of (s ?? '').split(/[,\s]+/)) {
+    const r = part.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (r) { for (let k = Number(r[1]); k <= Number(r[2]) && k < 50; k++) out.push(k); continue; }
+    const v = parseInt(part, 10);
+    if (Number.isFinite(v)) out.push(v);
+  }
+  return out;
+}
+
+function readFlow(parts: XEl[]): { flow: MeasureFlow[]; labels: string[]; barTotal: number } {
+  const count = Math.max(0, ...parts.map((p) => kids(p, 'measure').length));
+  const flow: MeasureFlow[] = Array.from({ length: count }, () => ({}));
+  const nums: (string | null)[] = Array(count).fill(null);
+  const implicit: boolean[] = Array(count).fill(false);
+  parts.forEach((part, pi) => {
+    let ending: number[] | null = null;
+    kids(part, 'measure').forEach((m, mi) => {
+      const f = flow[mi];
+      if (pi === 0) { nums[mi] = m.getAttribute('number'); implicit[mi] = m.getAttribute('implicit') === 'yes'; }
+      let inEnding: number[] | null = null;
+      let stopAfter = false;
+      const sounds: XEl[] = [];
+      for (const el of kids(m)) {
+        if (el.nodeName === 'barline') {
+          const rep = kid(el, 'repeat');
+          if (rep) {
+            if (rep.getAttribute('direction') === 'forward') f.forward = true;
+            else if (rep.getAttribute('direction') === 'backward') {
+              f.backward = true;
+              const t = parseInt(rep.getAttribute('times') ?? '', 10);
+              if (Number.isFinite(t) && t > 1) f.times = t;
+            }
+          }
+          const end = kid(el, 'ending');
+          if (end) {
+            const type = end.getAttribute('type');
+            if (type === 'start') { ending = parseEndingNumbers(end.getAttribute('number')); inEnding = ending; }
+            else if (type === 'stop' || type === 'discontinue') {
+              if (!ending) ending = parseEndingNumbers(end.getAttribute('number'));
+              inEnding = ending; stopAfter = true;
+            }
+          }
+        } else if (el.nodeName === 'sound') sounds.push(el);
+        else if (el.nodeName === 'direction') for (const s of kids(el, 'sound')) sounds.push(s);
+      }
+      if (!inEnding && ending) inEnding = ending;
+      if (inEnding && inEnding.length) f.endings = f.endings ?? inEnding;
+      if (stopAfter) ending = null;
+      for (const s of sounds) {
+        if (s.getAttribute('segno')) f.segno = s.getAttribute('segno')!;
+        if (s.getAttribute('coda')) f.coda = s.getAttribute('coda')!;
+        if (s.getAttribute('tocoda')) f.tocoda = s.getAttribute('tocoda')!;
+        if (s.getAttribute('dacapo') === 'yes') f.dacapo = true;
+        if (s.getAttribute('dalsegno')) f.dalsegno = s.getAttribute('dalsegno')!;
+        if (s.getAttribute('fine')) f.fine = true;
+      }
+    });
+  });
+  // bar labels: printed numbers when they are usable, else sequential after an optional pickup
+  const labels: string[] = [];
+  const pickup = count > 0 && (implicit[0] || nums[0] === '0');
+  const ints = nums.map((x) => (x !== null && /^\d+$/.test(x) ? Number(x) : null));
+  let usable = ints.every((x) => x !== null);
+  for (let i = 1; usable && i < count; i++) if (ints[i]! <= ints[i - 1]!) usable = false;
+  let barTotal = 0;
+  for (let i = 0; i < count; i++) {
+    if (i === 0 && pickup) { labels.push('Pickup'); continue; }
+    const n = usable && (!pickup || ints[0] === 0) ? ints[i]! : i + 1 - (pickup ? 1 : 0);
+    labels.push(String(n));
+    barTotal = Math.max(barTotal, n);
+  }
+  return { flow, labels, barTotal };
 }
 
 interface RawNote {
@@ -130,15 +273,25 @@ export function buildTimeline(xml: string): Timeline {
     }
     measureLens.push(len);
   }
+
+  // Play order: unroll repeats / endings / jumps.
+  const { flow, labels, barTotal } = readFlow(parts);
+  let order0 = unrollMeasures(flow);
+  if (order0.length === 0) order0 = measureLens.map((_, i) => i);
+  const hasRepeats = order0.length !== measureCount || order0.some((v, i) => v !== i);
   const measureStartsQ: number[] = [];
   let acc = 0;
-  for (const l of measureLens) { measureStartsQ.push(acc); acc += l; }
+  for (const mi of order0) { measureStartsQ.push(acc); acc += measureLens[mi]; }
 
   const events: TimelineEvent[] = [];
   for (const p of perPart) {
-    const abs = p.notes
-      .map((n) => ({ ...n, timeQ: measureStartsQ[n.measureIdx] + n.startQ }))
-      .sort((a, b) => a.timeQ - b.timeQ);
+    const byMeasure: RawNote[][] = Array.from({ length: measureCount }, () => []);
+    for (const n of p.notes) byMeasure[n.measureIdx].push(n);
+    const abs: (RawNote & { timeQ: number })[] = [];
+    order0.forEach((mi, slot) => {
+      for (const n of byMeasure[mi]) abs.push({ ...n, timeQ: measureStartsQ[slot] + n.startQ });
+    });
+    abs.sort((a, b) => a.timeQ - b.timeQ);
     const open = new Map<number, TimelineEvent>();
     for (const n of abs) {
       const prev = open.get(n.midi);
@@ -153,16 +306,36 @@ export function buildTimeline(xml: string): Timeline {
     }
   }
   events.sort((a, b) => a.timeQ - b.timeQ || a.midi - b.midi);
-  return { events, measureStartsQ, totalQ: acc, timeSigs };
+  return {
+    events, measureStartsQ, totalQ: acc, timeSigs,
+    order: order0.map((i) => i + 1), measureCount,
+    barLabels: labels.length === measureCount ? labels : measureLens.map((_, i) => String(i + 1)),
+    barTotal: barTotal || measureCount,
+    hasRepeats,
+  };
 }
 
-/** 1-based measure containing quarter-note position q (clamped). */
-export function measureAt(tl: Timeline, q: number): number {
+/** Index of the played bar that contains quarter-note position q (clamped). */
+export function slotAt(tl: Timeline, q: number): number {
   const s = tl.measureStartsQ;
   let lo = 0, hi = s.length - 1;
   while (lo < hi) {
     const mid = (lo + hi + 1) >> 1;
     if (s[mid] <= q + EPS) lo = mid; else hi = mid - 1;
   }
-  return lo + 1;
+  return Math.max(0, lo);
+}
+
+/** Start (play-order quarters) of the FIRST time written bar `measure` (1-based) is played. */
+export function firstQ(tl: Timeline, measure: number): number {
+  for (let m = Math.max(1, Math.min(tl.measureCount, measure)); m <= tl.measureCount; m++) {
+    const slot = tl.order.indexOf(m);
+    if (slot >= 0) return tl.measureStartsQ[slot];
+  }
+  return 0;
+}
+
+/** 1-based WRITTEN measure being played at quarter-note position q (clamped). */
+export function measureAt(tl: Timeline, q: number): number {
+  return tl.order[slotAt(tl, q)] ?? 1;
 }

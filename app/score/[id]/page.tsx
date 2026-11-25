@@ -66,8 +66,8 @@ export default function ScorePage() {
     const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const p = new Player(new AC());
     p.onState = setPlaying;
-    p.onPosition = (q, m) => {
-      view.current?.setPosition(q, m);
+    p.onPosition = (q, m, off) => {
+      view.current?.setPosition(q, m, off);
       if (m !== measureRef.current) { measureRef.current = m; setMeasure(m); }
     };
     player.current = p;
@@ -84,7 +84,7 @@ export default function ScorePage() {
   useEffect(() => {
     if (derived?.tl && player.current) {
       player.current.setTimeline(derived.tl);
-      if (measureRef.current > derived.tl.measureStartsQ.length) { measureRef.current = 1; setMeasure(1); }
+      if (measureRef.current > derived.tl.measureCount) { measureRef.current = 1; setMeasure(1); }
     }
   }, [derived]);
 
@@ -92,7 +92,8 @@ export default function ScorePage() {
   useEffect(() => { if (player.current) player.current.metronome = metronome; }, [metronome]);
   useEffect(() => { if (player.current) player.current.countIn = countIn; }, [countIn]);
 
-  const measureCount = derived?.tl?.measureStartsQ.length ?? 0;
+  const tlNow = derived?.tl ?? null;
+  const measureCount = tlNow?.measureCount ?? 0;
 
   const playPause = useCallback(() => {
     const p = player.current;
@@ -102,7 +103,7 @@ export default function ScorePage() {
   const goBar = useCallback((delta: number) => {
     const p = player.current;
     if (!p || !p.measureCount) return;
-    p.seek(Math.max(1, Math.min(p.measureCount, p.measure + delta)));
+    p.stepBar(delta);
   }, []);
 
   useEffect(() => {
@@ -157,6 +158,8 @@ export default function ScorePage() {
         playing={playing}
         measure={measure}
         measureCount={measureCount}
+        barLabel={tlNow?.barLabels[measure - 1]}
+        barTotal={tlNow?.barTotal}
         bpm={bpm}
         metronome={metronome}
         countIn={countIn}
