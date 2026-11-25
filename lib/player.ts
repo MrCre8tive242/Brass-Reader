@@ -140,7 +140,8 @@ export class Player {
     this.voice?.stop();
     this.voice = voice;
     this.engine = engine;
-    if (wasPlaying) this.restartFrom(this.currentQ());
+    // swap sounds without losing the place: sounding notes are re-attacked on the new instrument
+    if (wasPlaying || this.playing) this.restartFrom(this.currentQ(), false, 0);
     return engine;
   }
 
@@ -148,12 +149,16 @@ export class Player {
     const q = this.tl ? this.currentQ() : 0;
     const m = this.tl ? measureAt(this.tl, q) : 1;
     const wasPlaying = this.playing;
+    // same bar layout (instrument switch only changes pitches): keep the exact position
+    const prev = this.tl;
+    const sameLayout = !!prev && prev.measureStartsQ.length === tl.measureStartsQ.length
+      && prev.measureStartsQ.every((v, i) => Math.abs(v - tl.measureStartsQ[i]) < 1e-6);
+    const keepQ = sameLayout ? q : firstQ(tl, m);
     this.stopSound();
     this.tl = tl;
     this.clicks = buildClicks(tl);
-    // keep the user's place by bar number when the score is re-derived (instrument switch)
-    this.posQ = firstQ(tl, m);
-    if (wasPlaying) this.restartFrom(this.posQ, false);
+    this.posQ = keepQ;
+    if (wasPlaying) this.restartFrom(this.posQ, false, sameLayout ? 0 : undefined);
     else this.emit(this.posQ);
   }
 
@@ -208,8 +213,9 @@ export class Player {
     if (this.playing) {
       const q = this.currentQ();
       this.bpm = bpm;
-      // re-anchor so position is unchanged; already-scheduled lookahead notes are re-issued
-      this.restartFrom(q, false);
+      // re-anchor so position is unchanged (no lead, so rapid changes do not drift); notes that are
+      // sounding at q are re-attacked with their remaining length, lookahead notes are re-issued
+      this.restartFrom(q, false, 0);
     } else this.bpm = bpm;
   }
 
@@ -237,11 +243,10 @@ export class Player {
     this.voice?.stop();
   }
 
-  private restartFrom(q: number, withCountIn = false) {
+  private restartFrom(q: number, withCountIn = false, lead = 0.06) {
     if (!this.tl) return;
     this.stopSound();
     const now = this.ctx.currentTime;
-    const lead = 0.06;
     const m = measureAt(this.tl, q);
     const countQ = withCountIn ? barLengthQ(this.tl, m) : 0;
     this.startQ = q;
@@ -250,6 +255,13 @@ export class Player {
     this.posQ = q;
     this.nextEvent = this.tl.events.findIndex((e) => e.timeQ >= q - 1e-6);
     if (this.nextEvent < 0) this.nextEvent = this.tl.events.length;
+    // notes already sounding at q (started earlier, still held): re-attack with the remaining length
+    this.held = [];
+    for (let i = 0; i < this.nextEvent; i++) {
+      const e = this.tl.events[i];
+      const remQ = e.timeQ + e.durQ - q;
+      if (remQ > 0.02) this.held.push({ midi: e.midi, remQ });
+    }
     this.nextClick = this.clicks.findIndex((c) => c.timeQ >= q - 1e-6);
     if (this.nextClick < 0) this.nextClick = this.clicks.length;
     this.countInQ = countQ;
@@ -271,6 +283,7 @@ export class Player {
     this.raf = requestAnimationFrame(frame);
   }
 
+  private held: { midi: number; remQ: number }[] = [];
   private countInQ = 0;
   private countInPending = false;
   private countInNext = 0;
@@ -301,6 +314,11 @@ export class Player {
         this.countInNext++;
       }
       this.countInPending = false;
+    }
+    if (this.held.length && this.timeOf(this.startQ) <= horizon) {
+      const when = Math.max(this.timeOf(this.startQ), this.ctx.currentTime);
+      for (const h of this.held) this.voice?.start({ note: h.midi, time: when, duration: Math.max(0.05, h.remQ * spq * 0.97), velocity: 0.8 });
+      this.held = [];
     }
     const ev = this.tl.events;
     while (this.nextEvent < ev.length) {
