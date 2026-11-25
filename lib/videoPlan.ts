@@ -83,12 +83,13 @@ export function framePos(tl: Timeline, bpm: number, k: number, fps = VIDEO_FPS, 
   return { t, q, slot: slotAt(tl, q), bar: tl.order[w.slot] ?? 1, offQ: w.offQ, win: w, ended };
 }
 
-/** `<title> - <instrument> - <bpm>bpm.<ext>`, safe as a file name on phones and computers. */
-export function videoFileName(title: string, instrument: string, bpm: number, ext: string): string {
+/** `<title> - <instrument> - <bpm>bpm.<ext>` (with `bars`, e.g. "bars 9-12", after the title), safe as a file name on phones and computers. */
+export function videoFileName(title: string, instrument: string, bpm: number, ext: string, bars = ''): string {
   const clean = (s: string) => s.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '').replace(/\s+/g, ' ').trim();
   const t = clean(title).replace(/^\.+/, '') || 'score';
   const i = clean(instrument) || 'brass';
-  return `${t.slice(0, 80).trim()} - ${i} - ${Math.round(bpm)}bpm.${ext}`;
+  const b = clean(bars);
+  return `${t.slice(0, 80).trim()}${b ? ` ${b}` : ''} - ${i} - ${Math.round(bpm)}bpm.${ext}`;
 }
 
 /** Rough size of the file in bytes. */

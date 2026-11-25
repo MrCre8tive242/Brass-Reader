@@ -14,7 +14,10 @@ export interface VideoJob {
   bpm: number;
   /** Single-part MusicXML of my part (what the timeline was built from). */
   xml: string;
+  /** What is played (the whole tune, or a part of it such as the practice loop). */
   tl: Timeline;
+  /** The whole tune, when `tl` is only a part of it: the full sheet shows fingerings for every bar on the page. */
+  wholeTl?: Timeline;
   myIdx: number;
   instrument: InstrumentId;
   view: VideoView;
@@ -156,9 +159,10 @@ export class FrameDrawer {
     this.host.style.cssText = `position:fixed;left:-100000px;top:0;width:${this.area.w}px;pointer-events:none;visibility:hidden`;
     document.body.appendChild(this.host);
     const map = new Map<string, number>();
-    for (const e of job.tl.events) {
+    const all = job.wholeTl ?? job.tl;
+    for (const e of all.events) {
       if (e.part !== undefined && e.part !== job.myIdx) continue;
-      const k = noteKey(e.measure, offsetInBar(job.tl, e.timeQ));
+      const k = noteKey(e.measure, offsetInBar(all, e.timeQ));
       if (!map.has(k)) map.set(k, e.midi);
     }
     this.lookup = (bar, off) => map.get(noteKey(bar, off));

@@ -118,6 +118,9 @@ describe('video names and sizes', () => {
     expect(videoFileName('My Tune', 'Bb Trumpet', 100, 'mp4')).toBe('My Tune - Bb Trumpet - 100bpm.mp4');
     expect(videoFileName('A/B: "C"?', 'Trombone', 87.4, 'webm')).toBe('AB C - Trombone - 87bpm.webm');
     expect(videoFileName('  ', 'Mellophone (F)', 90, 'mp4')).toBe('score - Mellophone (F) - 90bpm.mp4');
+    // a video of the practice loop says which bars
+    expect(videoFileName('My Tune', 'Bb Trumpet', 80, 'mp4', 'bars 9-12')).toBe('My Tune bars 9-12 - Bb Trumpet - 80bpm.mp4');
+    expect(videoFileName('My Tune', 'Trombone', 80, 'mp4', 'bar 5')).toBe('My Tune bar 5 - Trombone - 80bpm.mp4');
   });
   it('sizes', () => {
     expect(videoSize('portrait')).toEqual({ width: 1080, height: 1920 });

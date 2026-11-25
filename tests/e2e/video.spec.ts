@@ -92,6 +92,7 @@ test.describe('Download video', () => {
     await expect(d.getByRole('radio', { name: 'Both', exact: true })).toHaveAttribute('aria-checked', 'true');
     await expect(d.getByLabel('Count-in bar')).toBeChecked();
     await expect(d.getByLabel('Include drums')).toBeDisabled(); // no groove chosen on this score
+    await expect(d.getByLabel('Only the looped bars')).toHaveCount(0); // no loop set
     // what the file will be is said before it is made; the length follows the count-in
     await expect(page.getByTestId('video-route')).toContainText(/MP4|WebM/);
     const est = page.getByTestId('video-estimate');
@@ -166,6 +167,27 @@ test.describe('Download video', () => {
     const buf = await saved(page);
     expect(fileDuration(buf)!.seconds).toBeGreaterThan(8.8);
     expect(fileDuration(buf)!.seconds).toBeLessThan(9.3);
+  });
+
+  test('with a practice loop set, the video can be of just those bars', async ({ page }) => {
+    await openDialog(page, 'v-loop', 240, { loop: { from: 3, to: 4 } });
+    const d = page.getByTestId('video-dialog');
+    const only = d.getByLabel('Only the looped bars');
+    await expect(only).not.toBeChecked(); // the whole tune unless asked
+    await expect(d).toContainText('Only the looped bars 3-4');
+    await expect(page.getByTestId('video-estimate')).toContainText('0:10 long');
+    await only.check();
+    // 2 bars at 240 = 2 s, a count-in bar of 1 s, 1 s tail
+    await expect(page.getByTestId('video-estimate')).toContainText('0:04 long');
+    await expect(d).toContainText('Video Demo, bars 3-4');
+    const v = await makeIt(page);
+    expect(v.durationS).toBeCloseTo(4, 1);
+    expect(v.frames).toBe(120);
+    expect(v.name).toBe(`Video Demo bars 3-4 - Bb Trumpet - 240bpm.${v.ext}`);
+    for (let s = 0; s < 3; s++) expect(v.rms[s], `second ${s}`).toBeGreaterThan(0.004);
+    const buf = await saved(page);
+    expect(fileDuration(buf)!.seconds).toBeGreaterThan(3.8);
+    expect(fileDuration(buf)!.seconds).toBeLessThan(4.3);
   });
 
   test('a browser without H.264 makes a WebM and says what that means', async ({ page }) => {

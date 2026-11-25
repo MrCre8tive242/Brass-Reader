@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Midi } from '@tonejs/midi';
-import { buildTimeline, measureAt } from '@/lib/timeline';
+import { buildTimeline, measureAt, sliceTimeline } from '@/lib/timeline';
+import { loopQ } from '@/lib/loop';
+import { framePos } from '@/lib/videoPlan';
+import { buildDrumEvents, starterGroove } from '@/lib/groove';
 import { toMidi } from '@/lib/midi';
 import { toConcert, fromConcert } from '@/lib/transpose';
 
@@ -122,5 +125,61 @@ describe('toMidi', () => {
     const tl = buildTimeline(fromConcert(toConcert(fx('scale.musicxml'), 'trumpet'), 'trumpet'));
     const m = new Midi(toMidi(tl, 100, 56));
     expect(m.tracks[0].notes[0].midi).toBe(58);
+  });
+});
+
+describe('a part of a tune as a tune of its own (a video of the practice loop)', () => {
+  const tl = buildTimeline(fx('scale.musicxml')); // 4 bars of 4 quarters
+
+  it('bars 2-3: starts at 0, keeps the written bar numbers, holds only their notes', () => {
+    const lq = loopQ(tl, { from: 2, to: 3 })!;
+    const part = sliceTimeline(tl, lq.startQ, lq.endQ);
+    expect(part.totalQ).toBe(8);
+    expect(part.measureStartsQ).toEqual([0, 4]);
+    expect(part.order).toEqual([2, 3]);
+    expect(part.measureCount).toBe(tl.measureCount);
+    expect(part.barLabels).toEqual(tl.barLabels);
+    expect(part.events.length).toBe(tl.events.filter((e) => e.measure === 2 || e.measure === 3).length);
+    expect(part.events.every((e) => e.measure === 2 || e.measure === 3)).toBe(true);
+    expect(Math.min(...part.events.map((e) => e.timeQ))).toBe(0);
+    expect(Math.max(...part.events.map((e) => e.timeQ + e.durQ))).toBeLessThanOrEqual(8);
+    // the pitches are the ones of those bars, in order
+    expect(part.events.map((e) => e.midi)).toEqual(tl.events.filter((e) => e.measure === 2 || e.measure === 3).map((e) => e.midi));
+    expect(tl.totalQ).toBe(16); // the tune itself is untouched
+  });
+
+  it('the video frames of it show bar 2 with bar 3, then bar 3 alone', () => {
+    const lq = loopQ(tl, { from: 2, to: 3 })!;
+    const part = sliceTimeline(tl, lq.startQ, lq.endQ);
+    expect(framePos(part, 120, 0)).toMatchObject({ bar: 2, slot: 0 });
+    expect(framePos(part, 120, 0).win.bars).toEqual([2, 3]);
+    expect(framePos(part, 120, 60)).toMatchObject({ bar: 3, slot: 1 });
+    expect(framePos(part, 120, 60).win.bars).toEqual([3]);
+    expect(framePos(part, 120, 121)).toMatchObject({ bar: 3, ended: true });
+  });
+
+  it('with repeats it is the played bars between the two points', () => {
+    const r = buildTimeline(fx('qa-repeats.musicxml')); // plays 1 2 3 1 2 4 5
+    const part = sliceTimeline(r, r.measureStartsQ[2], r.measureStartsQ[5]);
+    expect(part.order).toEqual([3, 1, 2]);
+    expect(part.totalQ).toBe(12);
+    expect(part.hasRepeats).toBe(true);
+  });
+
+  it('a note running past the end is cut there; nothing outside is taken', () => {
+    const cut = sliceTimeline(tl, 4, 6);
+    expect(cut.order).toEqual([2]);
+    expect(cut.totalQ).toBe(2);
+    for (const e of cut.events) expect(e.timeQ + e.durQ).toBeLessThanOrEqual(2 + 1e-9);
+    expect(sliceTimeline(tl, 100, 200)).toBe(tl); // nothing there: the whole tune
+  });
+
+  it('the drums start with it', () => {
+    const lq = loopQ(tl, { from: 3, to: 4 })!;
+    const part = sliceTimeline(tl, lq.startQ, lq.endQ);
+    const hits = buildDrumEvents(part, starterGroove('starter-a')!);
+    expect(hits.length).toBeGreaterThan(8);
+    expect(hits[0].timeQ).toBe(0);
+    expect(Math.max(...hits.map((h) => h.timeQ))).toBeLessThan(8);
   });
 });

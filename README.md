@@ -39,6 +39,7 @@ Everything you read is kept in **Your music** on that phone or computer, so you 
 - **Fingerings**: the same four styles.
 - **Count-in bar**: one bar of clicks, counted "1 2 3 4" on screen, before the music, so people can come in together.
 - **Include drums**: the groove chosen for this tune.
+- **Only the looped bars**: shown when a practice loop is set. The video is then just those bars (the drums start with them), which is handy for sending a section the hard four bars at a slow tempo. The file name says which bars.
 
 Tempo, instrument, your part and the band mix are the ones on the score screen. Tap **Make video**; you can watch the pictures go by while it works, and **Cancel** stops it. The video shows the title, instrument, tempo, bar number ("Bar 12 of 48"), the bar being played, the moving line and the fingerings. The sound is the horns and band parts as you mixed them, plus the drums, turned up to a normal video level.
 

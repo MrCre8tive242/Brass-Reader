@@ -47,6 +47,7 @@ V2 (video)
 - `webm-muxer` 5.1.4, MIT.
 
 ### How the video is made
+(As first built. The Refinement Log at the end changes steps 1, 3 and 4: sound in pieces, more ways to an MP4, the file written in blocks.)
 1. Sound: always rendered OFFLINE (`OfflineAudioContext`, 48 kHz stereo), much faster than real time. Horns and band parts as set (saved mix, not the temporary pitch-check mute), drums only if a groove is chosen and ticked. No click or count-in. Falls back to the synth if the soundfont cannot load.
 2. Pictures: the notation of each bar pair (or each page of lines for "Full sheet") is drawn once by OSMD into a hidden element, turned into an image, and every frame is drawn from the timeline on a canvas (30 fps): header with title/instrument/BPM/bar, bar highlight, moving line, fingerings, progress line.
 3. File: if the browser can encode H.264 + AAC with WebCodecs: MP4 via `mp4-muxer`, faster than real time. Else if it can encode VP9 (or VP8) + Opus: WebM via `webm-muxer`, also faster than real time (this is what Chromium here does: a 9 s video in about 3.5 s). Else: the sound is played in real time while the frames are drawn into `canvas.captureStream()` + `MediaRecorder` (MP4 where `isTypeSupported`, else WebM); the dialog says "recorded in real time" and the file is as long as the song. A short tail (1 s) is added. File name `<title> - <instrument> - <bpm>bpm.<ext>`.
@@ -64,6 +65,7 @@ V2 (video)
 - View switch placed UNDER the score (a row above it pushed the score down on a landscape phone and broke an existing test).
 
 ### NOT TESTED
+(As first built. See "Still NOT tested" in the Refinement Log for where this stands now.)
 - iPhone / Safari (WebCodecs `VideoEncoder`/`AudioEncoder`, `OfflineAudioContext` with the soundfont, `MediaRecorder` MP4, the Save button on iOS), real Android phones, real touch long-press on a device.
 - The MP4 (H.264 + AAC) path itself: the Chromium used here cannot encode H.264/AAC, so only the WebM path and the real-time path ran. The MP4 branch uses the same code with `mp4-muxer`, codec strings `avc1.640032`... and `mp4a.40.2`.
 - Memory on a phone for a 5-minute song (the offline sound is ~115 MB for 5 minutes, plus the file). Not tried on a real device; chunked rendering was not built.
@@ -130,6 +132,8 @@ Refinement pass over V1 (2-bar view) and V2 (video), in the order it was asked f
 ### 5. Other
 - Result screen: save buttons above the player (on a phone turned sideways the player pushed them off screen).
 - "Make another" brings the choices back instead of making the same video again.
+- **Only the looped bars** (shown when a practice loop is set, off by default): the video is of just the loop, as a small tune of its own (`sliceTimeline` in `lib/timeline.ts`): count-in, those bars once, the groove starting with them. The file is named `<title> bars 9-12 - <instrument> - <bpm>bpm.mp4`. For sending a section the hard bars at a slow tempo.
+- If the horn samples could not be loaded (no signal, nothing saved) the video is made with the simple synth sound and the result says so.
 
 ### Dependencies
 - None added. `mp4-muxer` 5.2.2 (MIT) and `webm-muxer` 5.1.4 (MIT) are used as before, now through their stream targets.
@@ -139,9 +143,9 @@ Refinement pass over V1 (2-bar view) and V2 (video), in the order it was asked f
 - With `window.__brTest` set before the page loads, the video dialog exposes `window.__brVideoLib` and `window.__brVideoJob` so a test can render the sound whole and in pieces and compare.
 
 ### Tests after this pass
-- Unit (vitest, `npm test`): **486 passed** in 31 files (was 448). New: `videoSupport.test.ts` (which file each kind of browser gets, Apple detection, save buttons), `blobSink.test.ts`, `videoMux.test.ts` (MP4 and WebM written block by block; **real H.264 + AAC streams from ffmpeg put together by the app's writer and decoded by ffmpeg without a complaint**, skipped where ffmpeg is not installed), `videoAudio.test.ts` (pieces, lead-ins, block alignment, drum dice), count-in and frame timing in `videoPlan.test.ts`, `markOfText` in `fingerStyle.test.ts`.
-- e2e (Playwright, Chromium, `npm run e2e -- --trace off`): **141 passed** in 25 files (was 122).
-  - `video.spec.ts` (16): MP4 with H.264 really encoded (2 bars and full sheet; ffprobe: h264, 1080×1920, 30 fps, 300 pictures, sound 48 kHz stereo, decodes clean; sound in every second), landscape without count-in, WebM when H.264 is refused (decodes clean), shape tip, real-time recording, fallback to real time when the encoder breaks half-way, cancel, synth sound without a signal, silent video, pretended current iPhone (Safari's user agent and answers; MP4 route, sound context made in the tap, share sheet given the right file, download still there), pretended older iPhone (real-time MP4, one sound context made in the tap), failed share, pieces of sound against one long render with kit drums.
+- Unit (vitest, `npm test`): **491 passed** in 31 files (was 448). New: `videoSupport.test.ts` (which file each kind of browser gets, Apple detection, save buttons), `blobSink.test.ts`, `videoMux.test.ts` (MP4 and WebM written block by block; **real H.264 + AAC streams from ffmpeg put together by the app's writer and decoded by ffmpeg without a complaint**, skipped where ffmpeg is not installed), `videoAudio.test.ts` (pieces, lead-ins, block alignment, drum dice), count-in and frame timing in `videoPlan.test.ts`, `markOfText` in `fingerStyle.test.ts`, `sliceTimeline` in `timeline.test.ts`.
+- e2e (Playwright, Chromium, `npm run e2e -- --trace off`): **142 passed** in 25 files (was 122).
+  - `video.spec.ts` (16; there were 5): a video of only the looped bars, MP4 with H.264 really encoded (2 bars and full sheet; ffprobe: h264, 1080×1920, 30 fps, 300 pictures, sound 48 kHz stereo, decodes clean; sound in every second), landscape without count-in, WebM when H.264 is refused (decodes clean), shape tip, real-time recording, fallback to real time when the encoder breaks half-way, cancel, synth sound without a signal, silent video, pretended current iPhone (Safari's user agent and answers; MP4 route, sound context made in the tap, share sheet given the right file, download still there), pretended older iPhone (real-time MP4, one sound context made in the tap), failed share, pieces of sound against one long render with kit drums.
   - `video-groove.spec.ts` (2): a recorded groove (fake microphone) is in the video's sound, on every second, and pieces still join; a two-part score sounds each part.
   - `twobar.spec.ts` (+4), `fingering.spec.ts` (+3): hidden size buttons, the shared style picker in Practice, styles on the full sheet, tapping dots, trombone slide icon.
   - The video file is its own Playwright project, listed first, so its heavy encoding runs next to screen-only tests and is over before the microphone tests start (run next to them it made one of them miss notes). Running one file works as before.

@@ -337,6 +337,28 @@ export function firstQ(tl: Timeline, measure: number): number {
   return 0;
 }
 
+/**
+ * The bars between two bar starts (quarters, play order) as a timeline of their own that begins at 0: a practice loop
+ * on its own. The written bar numbers and labels stay as they are. A note held over from before is not in it; a note
+ * that runs past the end is cut there.
+ */
+export function sliceTimeline(tl: Timeline, startQ: number, endQ: number): Timeline {
+  const from = Math.max(0, Math.min(tl.totalQ, startQ));
+  const to = Math.max(from, Math.min(tl.totalQ, endQ));
+  const slots: number[] = [];
+  tl.measureStartsQ.forEach((q, i) => { if (q >= from - EPS && q < to - EPS) slots.push(i); });
+  if (!slots.length) return tl;
+  return {
+    ...tl,
+    events: tl.events
+      .filter((e) => e.timeQ >= from - EPS && e.timeQ < to - EPS)
+      .map((e) => ({ ...e, timeQ: Math.max(0, e.timeQ - from), durQ: Math.min(e.durQ, to - e.timeQ) })),
+    measureStartsQ: slots.map((i) => tl.measureStartsQ[i] - from),
+    totalQ: to - from,
+    order: slots.map((i) => tl.order[i]),
+  };
+}
+
 /** 1-based WRITTEN measure being played at quarter-note position q (clamped). */
 export function measureAt(tl: Timeline, q: number): number {
   return tl.order[slotAt(tl, q)] ?? 1;

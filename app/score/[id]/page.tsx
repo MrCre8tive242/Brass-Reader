@@ -15,7 +15,7 @@ import { getScore, updateScore, type SavedScore } from '@/lib/library';
 import { onStorageProblem } from '@/lib/storage';
 import { INSTRUMENTS, isInstrumentId, type InstrumentId } from '@/lib/instruments';
 import { toConcert, fromConcert } from '@/lib/transpose';
-import { buildTimeline, measureAt } from '@/lib/timeline';
+import { buildTimeline, measureAt, sliceTimeline } from '@/lib/timeline';
 import { toMidi } from '@/lib/midi';
 import { detectSourceInstrument, summariseScore } from '@/lib/musicxml';
 import { songPartsOf, fitBars, mergeScores, mergeTimelines, type SongPart } from '@/lib/song';
@@ -515,6 +515,17 @@ export default function ScorePage() {
   }, [repair, score, tlNow]);
   const flagged = useMemo(() => [...new Set(checks.map((c) => c.measure).filter((m): m is number => m !== null))], [checks]);
 
+  // a video can be of the practice loop alone
+  const videoLoop = useMemo(() => {
+    const tl = derived?.tl;
+    if (!tl || !loopNorm) return null;
+    const lq = loopQ(tl, loopNorm);
+    if (!lq || (lq.startQ < 1e-6 && lq.endQ > tl.totalQ - 1e-6)) return null;
+    const a = tl.barLabels[loopNorm.from - 1] ?? String(loopNorm.from), b = tl.barLabels[loopNorm.to - 1] ?? String(loopNorm.to);
+    const name = (x: string) => (x === 'Pickup' ? 'pickup' : x);
+    return { tl: sliceTimeline(tl, lq.startQ, lq.endQ), words: loopNorm.from === loopNorm.to ? `bar ${name(a)}` : `bars ${name(a)}-${name(b)}` };
+  }, [derived?.tl, loopNorm?.from, loopNorm?.to]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (score === undefined) return <main className="page"><p className="muted loading-line"><span className="spinner" aria-hidden /> Opening the score…</p></main>;
   if (score === null) {
     return (
@@ -740,22 +751,29 @@ export default function ScorePage() {
           instrumentName={INSTRUMENTS[target].name}
           bpm={bpm}
           tl={derived.tl}
+          loop={videoLoop}
           slide={target === 'trombone'}
           hasDrums={!!groove}
-          initial={{ view: viewMode === 'twobar' ? 'twobar' : 'full', orientation: 'portrait', style: fingerStyle, drums: drums.on, countIn: true }}
+          initial={{ view: viewMode === 'twobar' ? 'twobar' : 'full', orientation: 'portrait', style: fingerStyle, drums: drums.on, countIn: true, loopOnly: false }}
           onChoose={(c) => changeFingerStyle(c.style)}
           onClose={() => setVideoOpen(false)}
-          build={(c: VideoChoices): VideoJob => ({
-            title: score.title, instrumentName: INSTRUMENTS[target].name, bpm, xml: derived.mineXml, tl: derived.tl!, myIdx, instrument: target,
-            view: c.view, orientation: c.orientation, style: c.style, countIn: c.countIn,
-            audio: {
-              tl: derived.tl!, bpm,
-              partInstruments: parts.map((p, i) => (i === myIdx ? target : p.instrument)),
-              mix: parts.map((p) => mix[p.id] ?? DEFAULT_MIX),
-              drumHits: drumEvents, drumSource: groove ? { groove, buffer: drumBuf?.id === groove.id ? drumBuf.buffer : null } : null,
-              drumsOn: !!groove && c.drums, drumsVolume: drums.volume,
-            },
-          })}
+          build={(c: VideoChoices): VideoJob => {
+            // the whole tune, or just the practice loop as a small tune of its own (the groove starts with it)
+            const part = c.loopOnly && videoLoop ? videoLoop.tl : null;
+            const tl = part ?? derived.tl!;
+            return {
+              title: score.title, instrumentName: INSTRUMENTS[target].name, bpm, xml: derived.mineXml, tl, wholeTl: derived.tl!, myIdx, instrument: target,
+              view: c.view, orientation: c.orientation, style: c.style, countIn: c.countIn,
+              audio: {
+                tl, bpm,
+                partInstruments: parts.map((p, i) => (i === myIdx ? target : p.instrument)),
+                mix: parts.map((p) => mix[p.id] ?? DEFAULT_MIX),
+                drumHits: part && groove ? buildDrumEvents(part, groove, drumFeel) : drumEvents,
+                drumSource: groove ? { groove, buffer: drumBuf?.id === groove.id ? drumBuf.buffer : null } : null,
+                drumsOn: !!groove && c.drums, drumsVolume: drums.volume,
+              },
+            };
+          }}
         />
       )}
       {studioOpen && <GrooveStudio getCtx={() => player.current?.context ?? null} clickBpm={bpm} onClose={() => setStudioOpen(false)} onChanged={refreshGrooves} />}

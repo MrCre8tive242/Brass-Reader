@@ -8,7 +8,7 @@ import type { VideoJob, VideoResult } from '@/lib/videoRender';
 import { canShareFile, isApple, isIOS, saveWays, type Route, type SaveWays } from '@/lib/videoSupport';
 import type { Timeline } from '@/lib/timeline';
 
-export interface VideoChoices { view: VideoView; orientation: VideoOrientation; style: FingerStyle; drums: boolean; countIn: boolean }
+export interface VideoChoices { view: VideoView; orientation: VideoOrientation; style: FingerStyle; drums: boolean; countIn: boolean; loopOnly: boolean }
 
 interface Props {
   title: string;
@@ -16,6 +16,8 @@ interface Props {
   bpm: number;
   tl: Timeline;
   slide: boolean;
+  /** The practice loop, if one is set: the video can be of just those bars. `words` is e.g. "bars 9-12". */
+  loop?: { tl: Timeline; words: string } | null;
   /** A groove is chosen for this score: the drums can be part of the video. */
   hasDrums: boolean;
   initial: VideoChoices;
@@ -41,7 +43,7 @@ function routeLine(route: Route | null, seconds: number): { text: string; warn?:
   return { text: 'This browser cannot make a video file. Try Safari on an iPhone, or Chrome on Android or a computer.', warn: true };
 }
 
-export default function VideoDialog({ title, instrumentName, bpm, tl, slide, hasDrums, initial, build, onChoose, onClose }: Props) {
+export default function VideoDialog({ title, instrumentName, bpm, tl: wholeTl, loop, slide, hasDrums, initial, build, onChoose, onClose }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const [c, setC] = useState<VideoChoices>(initial);
   const [phase, setPhase] = useState<'idle' | 'busy' | 'done' | 'error'>('idle');
@@ -79,6 +81,8 @@ export default function VideoDialog({ title, instrumentName, bpm, tl, slide, has
   const other: VideoOrientation = c.orientation === 'portrait' ? 'landscape' : 'portrait';
   const otherIsMp4 = !!routes && route?.kind !== 'mp4' && routes[other].kind === 'mp4';
 
+  const loopOnly = !!loop && c.loopOnly;
+  const tl = loopOnly ? loop!.tl : wholeTl;
   const lead = useMemo(() => (c.countIn ? countInLead(tl, bpm) : NO_LEAD), [c.countIn, tl, bpm]);
   const seconds = videoSeconds(tl, bpm, lead);
   const bytes = estimateBytes(seconds);
@@ -124,7 +128,7 @@ export default function VideoDialog({ title, instrumentName, bpm, tl, slide, has
         });
         const url = URL.createObjectURL(out.blob);
         urlRef.current = url;
-        const name = videoFileName(title, instrumentName, bpm, out.ext);
+        const name = videoFileName(title, instrumentName, bpm, out.ext, loopOnly ? loop!.words : '');
         let file: File | null = null;
         try { file = new File([out.blob], name, { type: out.mime }); } catch { file = null; }
         const touch = (nav.maxTouchPoints ?? 0) > 0;
@@ -172,7 +176,7 @@ export default function VideoDialog({ title, instrumentName, bpm, tl, slide, has
           <button type="button" className="iconbtn" aria-label="Close" onClick={close}>✕</button>
         </div>
         <div className="vdlg-body">
-          <p className="muted small">{title} · {instrumentName} · {Math.round(bpm)} BPM · {mmss(seconds - VIDEO_TAIL_S - lead.seconds)}. Tempo and instrument are the ones set on the score screen.</p>
+          <p className="muted small">{title}{loopOnly ? `, ${loop!.words}` : ''} · {instrumentName} · {Math.round(bpm)} BPM · {mmss(seconds - VIDEO_TAIL_S - lead.seconds)}. Tempo and instrument are the ones set on the score screen.</p>
           {!busy && phase !== 'done' && (
             <>
               <div className="seg-wrap">
@@ -191,6 +195,11 @@ export default function VideoDialog({ title, instrumentName, bpm, tl, slide, has
               </div>
               <FingerStylePicker value={c.style} onChange={(s) => set({ style: s })} label={slide ? 'Slide positions' : 'Fingerings'} slide={slide} testId="video-finger-style" />
               <div className="vdlg-checks">
+                {loop && (
+                  <label className="chk wide">
+                    <input type="checkbox" checked={c.loopOnly} onChange={(e) => set({ loopOnly: e.target.checked })} aria-label="Only the looped bars" /> Only the looped {loop.words}
+                  </label>
+                )}
                 <label className="chk wide">
                   <input type="checkbox" checked={c.countIn} onChange={(e) => set({ countIn: e.target.checked })} aria-label="Count-in bar" /> Count-in bar before the music
                 </label>
