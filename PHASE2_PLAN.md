@@ -103,4 +103,4 @@ Not fixed (and why)
 - A half-height "peek" drawer, a moving playhead in the step editor, a per-note text alternative for pitch-check colours, and an accessible name for the loop frame on the score were suggestions, not in the fix list, and were not built.
 - Not tested: real iOS Safari (share sheet, vibration, long-press), screen readers, real microphones (the mic light and the late-opening microphone were tested with Chromium's fake device only).
 
-Tests after this pass: see the commit message of the last commit (unit and e2e totals were rerun in full).
+Tests after this pass: 354 vitest unit tests, 95 Playwright e2e tests (all pass; one drums timing test, `drums-play` "a starter pattern ... bar jump", failed once under load in a full run and passed 3 of 3 alone and on the full rerun), `npm run build` passes. New specs: `dialogs.spec.ts`, `loop-feedback.spec.ts`, `mic-light.spec.ts`, `groove-polish.spec.ts`. Two commits: sousaphone/alternates, then everything else (the UI changes share `page.tsx` and `globals.css`, so they were not split further).
