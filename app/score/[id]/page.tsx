@@ -391,7 +391,7 @@ export default function ScorePage() {
   const changeRangeOn = (v: boolean) => { setRangeOn(v); lsSet('brass-reader:range', v ? '1' : '0'); };
   // valves / slide positions under my notes (looked up by what the instrument is playing)
   const fingerLabels = useMemo<NoteLabel[] | undefined>(() => {
-    if (!fingerings || !tlNow) return undefined;
+    if (!fingerings || fingerStyle === 'off' || !tlNow) return undefined;
     const out: NoteLabel[] = [];
     for (const e of tlNow.events) {
       if (e.part !== undefined && e.part !== myIdx) continue;
@@ -399,7 +399,7 @@ export default function ScorePage() {
       out.push({ measure: e.measure, offQ: offsetInBar(tlNow, e.timeQ), text: f ? f.primary : '—', alts: f?.alternates });
     }
     return out;
-  }, [fingerings, tlNow, myIdx, target]);
+  }, [fingerings, fingerStyle, tlNow, myIdx, target]);
   useEffect(() => { setFingerings(lsGet('brass-reader:fingerings') === '1'); }, []);
   const changeFingerings = (v: boolean) => { setFingerings(v); lsSet('brass-reader:fingerings', v ? '1' : '0'); };
   useEffect(() => { setFingerStyle(normalizeFingerStyle(lsGet('brass-reader:finger-style'))); }, []);
@@ -529,6 +529,9 @@ export default function ScorePage() {
   // what each practice tool is doing right now: shown on its folded header and as a dot on its shortcut
   const drumsLive = !!groove && drums.on;
   const fingerWord = target === 'trombone' ? 'Slide' : 'Fingering';
+  // fingerings are on screen: always in the 2-bar view (unless switched off), on the full sheet when asked for
+  const fingerShown = fingerStyle !== 'off' && (viewMode === 'twobar' || fingerings);
+  const fingerStatus = fingerStyle === 'numbers' ? 'Numbers' : fingerStyle === 'dots' ? (target === 'trombone' ? 'Slide icon' : 'Valve dots') : 'Both';
   const loopNow = normalizeLoop(loop, measureCount);
   const loopStatus = loopNow
     ? `${loopNow.from === loopNow.to ? `Bar ${loopNow.from}` : `Bars ${loopNow.from}–${loopNow.to}`}${trainer?.enabled ? ` · ${trainer.start}→${trainer.target} BPM` : ''}`
@@ -538,7 +541,7 @@ export default function ScorePage() {
   const practiceTabs = [
     { id: 'loop', label: 'Loop', on: !!loopNow }, { id: 'drums', label: 'Drums', on: drumsLive }, { id: 'pitch', label: 'Pitch', on: pitchOn },
     { id: 'record', label: 'Record', on: recBusy }, { id: 'band', label: 'Band' },
-    { id: 'fingerings', label: fingerWord, on: fingerings }, { id: 'range', label: 'Range', on: rangeOn && rangeIssues.length > 0 },
+    { id: 'fingerings', label: fingerWord, on: fingerShown }, { id: 'range', label: 'Range', on: rangeOn && rangeIssues.length > 0 },
   ];
   const loopShown = normalizeLoop(loop, measureCount);
 
@@ -548,10 +551,13 @@ export default function ScorePage() {
         <Link href="/" className="back" aria-label="Back to library"><BackIcon /></Link>
         <h1 className="title">{score.title}</h1>
         <button type="button" className="practice-btn" aria-expanded={practiceOpen} aria-controls="practice-sheet" aria-haspopup="dialog" onClick={() => setPracticeOpen((o) => !o)}><LoopIcon size={22} /><span>Practice</span></button>
-        <div className="zoom" role="group" aria-label="Score size">
-          <button type="button" onClick={() => changeZoom(-ZOOM_STEP)} aria-label="Zoom out" disabled={zoom <= ZOOM_MIN}>A−</button>
-          <button type="button" onClick={() => changeZoom(ZOOM_STEP)} aria-label="Zoom in" disabled={zoom >= ZOOM_MAX}>A+</button>
-        </div>
+        {/* the two bars always fill the screen: there is nothing to make bigger or smaller there */}
+        {viewMode === 'full' && (
+          <div className="zoom" role="group" aria-label="Score size">
+            <button type="button" onClick={() => changeZoom(-ZOOM_STEP)} aria-label="Zoom out" disabled={zoom <= ZOOM_MIN}>A−</button>
+            <button type="button" onClick={() => changeZoom(ZOOM_STEP)} aria-label="Zoom in" disabled={zoom >= ZOOM_MAX}>A+</button>
+          </div>
+        )}
       </header>
       <main className="page">
         <InstrumentPicker source={source} target={target} onSource={onSource} onTarget={onTarget} hint={sourceHint} />
@@ -636,6 +642,8 @@ export default function ScorePage() {
             flagged={flagged}
             marks={marks}
             labels={fingerLabels}
+            labelStyle={fingerStyle}
+            slide={target === 'trombone'}
             loop={normalizeLoop(loop, measureCount)}
             onLoopSelect={pickLoop}
             onSeekMeasure={seekGuarded}
@@ -687,14 +695,16 @@ export default function ScorePage() {
             onMix={onMix} onMy={(i) => onPart(String(i))} onFull={onFull} onInstrument={onPartInstrument}
           />
         </Section>
-        <Section id="fingerings" title={INSTRUMENTS[target].id === 'trombone' ? 'Slide positions' : 'Fingerings'} status={fingerings ? 'Shown' : undefined} live={fingerings}>
+        <Section id="fingerings" title={INSTRUMENTS[target].id === 'trombone' ? 'Slide positions' : 'Fingerings'} status={fingerShown ? fingerStatus : undefined} live={fingerShown}>
+          <FingerStylePicker value={fingerStyle} onChange={changeFingerStyle} label="How they are written" slide={target === 'trombone'} testId="finger-style-practice" />
+          <p className="muted small">One choice for the 2-bar view, the full sheet and the videos.</p>
           <label className="chk wide">
-            <input type="checkbox" checked={fingerings} onChange={(e) => changeFingerings(e.target.checked)} aria-label="Show fingerings" /> Show {target === 'trombone' ? 'slide positions' : 'fingerings'} under the notes
+            <input type="checkbox" checked={fingerings && fingerStyle !== 'off'} disabled={fingerStyle === 'off'} onChange={(e) => changeFingerings(e.target.checked)} aria-label="Show fingerings" /> Show {target === 'trombone' ? 'slide positions' : 'fingerings'} on the full sheet too
           </label>
           <p className="muted small" data-testid="finger-help">
             {target === 'trombone'
-              ? 'Slide positions 1 to 7 (1 = in). The usual position is shown; tap one for another way to play the note.'
-              : `Valves 1, 2, 3 (0 = open). The usual fingering is shown; tap one for another way to play the note. ${target === 'trumpet' || target === 'mellophone' ? 'Looked up by the written pitch.' : 'Looked up by the concert pitch.'}`}
+              ? 'Slide positions 1 to 7 (1 = in). The usual position is shown; on the full sheet, tap one for another way to play the note.'
+              : `Valves 1, 2, 3 (0 = open; a filled dot = valve pressed). The usual fingering is shown; on the full sheet, tap one for another way to play the note. ${target === 'trumpet' || target === 'mellophone' ? 'Looked up by the written pitch.' : 'Looked up by the concert pitch.'}`}
             {' '}A dash means the note is outside the chart.
           </p>
         </Section>

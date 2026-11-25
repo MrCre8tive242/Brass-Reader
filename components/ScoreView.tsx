@@ -1,6 +1,7 @@
 'use client';
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { noteKey } from '@/lib/timeline';
+import { layoutFinger, markOfText, type FingerStyle } from '@/lib/fingerStyle';
 
 /** Colour a note on the drawn score. `range` marks a note outside the instrument's range. */
 export interface NoteMark { measure: number; offQ: number; kind: 'green' | 'yellow' | 'red' | 'range'; arrow?: 'up' | 'down' }
@@ -8,6 +9,40 @@ export interface NoteMark { measure: number; offQ: number; kind: 'green' | 'yell
 export interface NoteLabel { measure: number; offQ: number; text: string; alts?: string[] }
 
 const MARK_COLOR: Record<NoteMark['kind'], string> = { green: '#1c9c47', yellow: '#d99a00', red: '#d62d20', range: '#8a2be2' };
+const FINGER_INK = '#5b4a2a';
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/**
+ * Draw the valve dots (or, for a slide instrument, the slide icon) of fingering `text` into `g`, centred on x = 0 with
+ * its top at y = 0. Returns its height in px.
+ */
+function drawFingerIcon(g: SVGGElement, text: string, slide: boolean, size: number): number {
+  while (g.firstChild) g.removeChild(g.firstChild);
+  const mark = markOfText(text, slide, 'dots');
+  if (!mark || (!mark.dots && mark.slide === null)) {
+    // outside the chart: a dash where the dots would be
+    const t = document.createElementNS(SVG_NS, 'text');
+    t.textContent = '—';
+    t.setAttribute('text-anchor', 'middle'); t.setAttribute('y', String(size * 0.8)); t.setAttribute('font-size', String(size));
+    t.style.fill = FINGER_INK; t.style.stroke = 'none';
+    g.appendChild(t);
+    return size;
+  }
+  const lay = layoutFinger({ text: null, dots: mark.dots, slide: mark.slide }, size);
+  const el = (name: string, attrs: Record<string, string | number>, fill: string, stroke: string, sw = 0) => {
+    const e = document.createElementNS(SVG_NS, name);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, typeof v === 'number' ? v.toFixed(1) : v);
+    e.style.fill = fill; e.style.stroke = stroke; if (sw) e.style.strokeWidth = `${sw.toFixed(1)}px`;
+    g.appendChild(e);
+  };
+  for (const s of lay.shapes) {
+    if (s.t === 'box') el('rect', { x: s.x, y: s.y, width: s.w, height: s.h, rx: s.r, opacity: '0.3' }, 'transparent', FINGER_INK, 1);
+    else if (s.t === 'dot') el('circle', { cx: s.x, cy: s.y, r: s.r }, s.filled ? FINGER_INK : 'none', FINGER_INK, Math.max(1, s.r * 0.3));
+    else if (s.t === 'marker') el('circle', { cx: s.x, cy: s.y, r: s.r }, FINGER_INK, 'none');
+    else if (s.t === 'line') el('line', { x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2, 'stroke-linecap': 'round' }, 'none', FINGER_INK, s.w);
+  }
+  return lay.h;
+}
 
 export interface ScoreViewHandle {
   /** Move the cursor + bar highlight to quarter-note position q. */
@@ -25,6 +60,10 @@ interface Props {
   /** Notes to colour (pitch check, range warnings) and fingerings to write under notes of my part. */
   marks?: NoteMark[];
   labels?: NoteLabel[];
+  /** How the fingerings are written: numbers (default), valve dots / slide icon, or both. */
+  labelStyle?: FingerStyle;
+  /** A slide instrument: positions and a slide icon instead of valve dots. */
+  slide?: boolean;
   /** Bars (written, 1-based, inclusive) shaded as the practice loop. */
   loop?: { from: number; to: number } | null;
   /** The player picked bars by long-press or drag. */
@@ -43,7 +82,7 @@ type Osmd = any;
 
 const UNIT = 10; // OSMD units are 10px at zoom 1
 
-const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, zoom = 1, flagged, marks, labels, loop, onLoopSelect, onSeekMeasure, onReady, onError }, ref) {
+const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, zoom = 1, flagged, marks, labels, labelStyle = 'numbers', slide = false, loop, onLoopSelect, onSeekMeasure, onReady, onError }, ref) {
   const wrap = useRef<HTMLDivElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const hl = useRef<HTMLDivElement>(null);
@@ -357,14 +396,14 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
     if (!map) return;
     const osmd = osmdRef.current;
     const fs = Math.max(9, (osmd?.zoom ?? 1) * UNIT * 1.5);
-    const addText = (g: SVGElement, text: string, color: string, dy: number, extra?: Record<string, string>) => {
+    const addText = (g: SVGElement, text: string, color: string, dy: number, extra?: Record<string, string>, box?: DOMRect, down = 0) => {
       let bb: DOMRect;
-      try { bb = (g as unknown as SVGGraphicsElement).getBBox(); } catch { return; }
+      try { bb = box ?? (g as unknown as SVGGraphicsElement).getBBox(); } catch { return; }
       if (!bb.width && !bb.height) return;
       const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       t.textContent = text;
       t.setAttribute('x', String(bb.x + bb.width / 2));
-      t.setAttribute('y', String(dy < 0 ? bb.y - 3 : bb.y + bb.height + fs + 1));
+      t.setAttribute('y', String(dy < 0 ? bb.y - 3 : bb.y + bb.height + fs + 1 + down));
       t.setAttribute('text-anchor', 'middle');
       t.setAttribute('font-size', String(fs));
       t.setAttribute('font-weight', '700');
@@ -384,16 +423,31 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
         if (m.arrow) addText(g, m.arrow === 'up' ? '↑' : '↓', color, -1, { 'data-arrow': m.arrow });
       }
     }
+    if (labelStyle === 'off') return;
     for (const l of labels ?? []) {
       for (const g of map.get(noteKey(l.measure, l.offQ)) ?? []) {
-        addText(g, l.text, '#5b4a2a', 1, { 'data-finger': l.text, 'data-opts': [l.text, ...(l.alts ?? [])].join('|'), 'data-i': '0', style: 'cursor:pointer' });
+        const attrs = { 'data-finger': l.text, 'data-opts': [l.text, ...(l.alts ?? [])].join('|'), 'data-i': '0', style: 'cursor:pointer' };
+        const mark = markOfText(l.text, slide, labelStyle);
+        if (!mark || (!mark.dots && mark.slide === null)) { addText(g, mark?.text ?? l.text, FINGER_INK, 1, attrs); continue; }
+        // valve dots (or the slide icon) under the note, the number under them
+        let bb: DOMRect;
+        try { bb = (g as unknown as SVGGraphicsElement).getBBox(); } catch { continue; }
+        if (!bb.width && !bb.height) continue;
+        const icon = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        icon.setAttribute('transform', `translate(${(bb.x + bb.width / 2).toFixed(1)} ${(bb.y + bb.height + 3).toFixed(1)})`);
+        icon.setAttribute('data-finger-icon', '');
+        const h = drawFingerIcon(icon, l.text, slide, fs * 0.92);
+        g.appendChild(icon);
+        painted.current.added.push(icon);
+        if (mark.text !== null) addText(g, mark.text, FINGER_INK, 1, attrs, bb, h + 2);
+        else { for (const [k, v] of Object.entries(attrs)) icon.setAttribute(k, v); icon.setAttribute('data-size', String(fs * 0.92)); }
       }
     }
   }
   const paintRef = useRef(paint);
   paintRef.current = paint;
   // marks and fingerings are painted again after every redraw and whenever they change
-  useEffect(() => { if (!busy) paintRef.current(); }, [marks, labels, layout, busy]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!busy) paintRef.current(); }, [marks, labels, labelStyle, slide, layout, busy]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function onClick(e: React.MouseEvent) {
     if (swallowClick.current) { swallowClick.current = false; return; }
@@ -404,8 +458,13 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
       if (opts.length > 1) {
         const i = (Number(f.getAttribute('data-i') ?? '0') + 1) % opts.length;
         f.setAttribute('data-i', String(i));
-        f.textContent = opts[i];
         f.setAttribute('data-alt', i === 0 ? '0' : '1');
+        if (f.tagName.toLowerCase() === 'text') {
+          f.textContent = opts[i];
+          // the dots above the number show the same way of playing the note
+          const icon = f.previousElementSibling;
+          if (icon?.hasAttribute('data-finger-icon')) drawFingerIcon(icon as SVGGElement, opts[i], slide, Number(f.getAttribute('font-size')) * 0.92);
+        } else drawFingerIcon(f as SVGGElement, opts[i], slide, Number(f.getAttribute('data-size')) || 12);
       }
       return;
     }

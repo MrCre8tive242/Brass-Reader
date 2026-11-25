@@ -401,6 +401,9 @@ details.warn summary strong { margin-right: 0.25em; }
 .seg button { min-height: 44px; min-width: 48px; padding: 0 12px; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--text); font: inherit; font-size: 0.92rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
 .seg button:last-child { border-right: 0; }
 .seg button.on { background: var(--accent); color: var(--accent-ink); }
+/* in the practice drawer: full-size touch targets, and the four styles wrap on a narrow phone */
+.sheet .seg { display: flex; flex-wrap: wrap; max-width: 100%; }
+.sheet .seg button { min-height: 48px; flex: 1 1 auto; }
 @media (max-width: 420px) { .seg button { padding: 0 9px; font-size: 0.86rem; } .viewbar { gap: 4px 10px; } }
 @media (orientation: landscape) and (max-height: 520px) { .viewbar { margin: 2px 0 4px; } .seg button { min-height: 40px; } .seg-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); } }
 
@@ -450,4 +453,4 @@ details.warn summary strong { margin-right: 0.25em; }
 .vprev canvas { display: block; max-width: 100%; max-height: 34vh; width: auto; height: auto; border-radius: 10px; border: 1px solid var(--line); }
 .vplay { display: block; width: 100%; max-height: 38vh; border-radius: 10px; background: #000; }
 .vprog p { margin: 6px 0 0; }
-@media (orientation: landscape) and (max-height: 520px) { .vdlg-body { gap: 8px; } .vdlg-foot { padding: 6px 18px 8px; } .vprev canvas { max-height: 42vh; } .vplay { max-height: 46vh; } }
+@media (orientation: landscape) and (max-height: 520px) { .vdlg-body { gap: 8px; } .vdlg-foot { padding: 6px 18px 8px; } .vprev canvas { max-height: 42vh; } .vplay { max-height: 60vh; } .vsave { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); } }

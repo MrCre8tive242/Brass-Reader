@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fingerMark, layoutFinger, fitFingerSize, normalizeFingerStyle, DEFAULT_FINGER_STYLE, FINGER_STYLES, textWidth } from '@/lib/fingerStyle';
+import { fingerMark, markOfText, layoutFinger, fitFingerSize, normalizeFingerStyle, DEFAULT_FINGER_STYLE, FINGER_STYLES, textWidth } from '@/lib/fingerStyle';
 import { windowOverlay } from '@/lib/windowOverlay';
 import type { WindowLayout } from '@/lib/windowRender';
 
@@ -146,5 +146,33 @@ describe('overlay under the drawn notes', () => {
     const dots = windowOverlay(layout, [3, 4], ['3', '4'], lookup, 'trumpet', 'dots').items.filter((i) => i.finger).flatMap((i) => i.shapes);
     expect(dots.some((s) => s.t === 'text')).toBe(false);
     expect(dots.some((s) => s.t === 'dot')).toBe(true);
+  });
+});
+
+describe('a fingering from its written form (what a tap on the full sheet steps through)', () => {
+  it('valves: text and dots by style', () => {
+    expect(markOfText('1-3', false, 'both')).toEqual({ text: '1-3', dots: [true, false, true], slide: null });
+    expect(markOfText('1-3', false, 'dots')).toEqual({ text: null, dots: [true, false, true], slide: null });
+    expect(markOfText('1-3', false, 'numbers')).toEqual({ text: '1-3', dots: null, slide: null });
+    expect(markOfText('0', false, 'dots')).toEqual({ text: null, dots: [false, false, false], slide: null });
+    expect(markOfText('3', false, 'both')?.dots).toEqual([false, false, true]);
+    expect(markOfText('1-2-3', false, 'both')?.dots).toEqual([true, true, true]);
+    expect(markOfText('2', false, 'off')).toBeNull();
+  });
+  it('slide: the number always, the icon unless numbers were asked for', () => {
+    expect(markOfText('6', true, 'both')).toEqual({ text: '6', dots: null, slide: 6 });
+    expect(markOfText('6', true, 'dots')).toEqual({ text: '6', dots: null, slide: 6 });
+    expect(markOfText('6', true, 'numbers')).toEqual({ text: '6', dots: null, slide: null });
+  });
+  it('a dash (outside the chart) or anything unreadable stays a dash', () => {
+    expect(markOfText('—', false, 'both')).toEqual({ text: '—', dots: null, slide: null });
+    expect(markOfText('x', false, 'dots')).toEqual({ text: '—', dots: null, slide: null });
+    expect(markOfText('', true, 'both')).toEqual({ text: '—', dots: null, slide: null });
+  });
+  it('agrees with the chart lookup for every style', () => {
+    for (const style of ['numbers', 'dots', 'both'] as const) {
+      expect(fingerMark('trumpet', A4, style)).toEqual(markOfText('1-2', false, style));
+      expect(fingerMark('trombone', 58, style)).toEqual(markOfText('1', true, style));
+    }
   });
 });

@@ -34,15 +34,24 @@ export interface FingerMark {
 export function fingerMark(inst: InstrumentId, soundingMidi: number, style: FingerStyle): FingerMark | null {
   if (style === 'off') return null;
   const f = fingeringFor(inst, soundingMidi);
-  if (!f) return { text: '—', dots: null, slide: null };
-  if (f.kind === 'slide') {
+  return markOfText(f ? f.primary : '—', f?.kind === 'slide', style);
+}
+
+/**
+ * The same from a fingering as it is written ("1-3", "0", a slide position "4", or a dash for a note outside the
+ * chart): used where the text is already known, e.g. when a player taps through the other ways to play a note.
+ */
+export function markOfText(text: string, slide: boolean, style: FingerStyle): FingerMark | null {
+  if (style === 'off') return null;
+  if (text === '—' || !/^\d(-\d)*$/.test(text)) return { text: '—', dots: null, slide: null };
+  if (slide) {
     // a trombone has no valves: the position number always shows, with a small slide icon unless "Numbers" was chosen
-    return { text: f.primary, dots: null, slide: style === 'numbers' ? null : Number(f.primary) };
+    return { text, dots: null, slide: style === 'numbers' ? null : Number(text) };
   }
-  const pressed = f.primary === '0' ? [] : f.primary.split('-').map(Number);
+  const pressed = text === '0' ? [] : text.split('-').map(Number);
   const dots = [1, 2, 3].map((v) => pressed.includes(v));
   return {
-    text: style === 'dots' ? null : f.primary,
+    text: style === 'dots' ? null : text,
     dots: style === 'numbers' ? null : dots,
     slide: null,
   };

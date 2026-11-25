@@ -142,6 +142,41 @@ for (const vp of [{ width: 375, height: 812 }, { width: 844, height: 390 }]) {
       await expect(fingers(page)).toHaveCount(1);
     });
 
+    test('the size buttons are only there for the full sheet (the two bars always fill the screen)', async ({ page }) => {
+      await open2(page, 'phase3-demo.musicxml', 'tbz');
+      await expect(page.getByRole('button', { name: 'Zoom in' })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Zoom out' })).toHaveCount(0);
+      await page.getByRole('radio', { name: 'Full sheet' }).click();
+      await expect(page.getByTestId('score')).toHaveAttribute('data-busy', '0', { timeout: 30_000 });
+      await expect(page.getByRole('button', { name: 'Zoom in' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Zoom out' })).toBeVisible();
+    });
+
+    test('the fingering style in Practice is the same setting as the one under the bars', async ({ page }) => {
+      await open2(page, 'phase3-demo.musicxml', 'tbs');
+      await expect(fingers(page)).toHaveCount(10);
+      await openPractice(page, 'fingerings');
+      const inDrawer = page.getByTestId('finger-style-practice');
+      await expect(inDrawer.getByRole('radio', { name: 'Both', exact: true })).toHaveAttribute('aria-checked', 'true');
+      await expect(page.getByTestId('status-fingerings')).toHaveText('Both');
+      await inDrawer.getByRole('radio', { name: 'Numbers', exact: true }).click();
+      await expect(active(page).locator('.tb-fing circle')).toHaveCount(0);
+      await expect(active(page).locator('.tb-fing text.num')).toHaveCount(10);
+      await expect(page.getByTestId('status-fingerings')).toHaveText('Numbers');
+      await inDrawer.getByRole('radio', { name: 'Off', exact: true }).click();
+      await expect(fingers(page)).toHaveCount(0);
+      await expect(page.getByTestId('status-fingerings')).toHaveCount(0);
+      await expect(page.getByLabel('Show fingerings')).toBeDisabled();
+      await page.getByRole('button', { name: 'Close practice tools' }).click();
+      // the picker under the bars shows the same choice, and changes it back
+      const under = page.getByTestId('finger-style');
+      await expect(under.getByRole('radio', { name: 'Off', exact: true })).toHaveAttribute('aria-checked', 'true');
+      await under.getByRole('radio', { name: 'Valve dots', exact: true }).click();
+      await expect(active(page).locator('.tb-fing circle.dot')).toHaveCount(30);
+      await openPractice(page, 'fingerings');
+      await expect(inDrawer.getByRole('radio', { name: 'Valve dots', exact: true })).toHaveAttribute('aria-checked', 'true');
+    });
+
     test('the choice of view is remembered per score; back to the full sheet works', async ({ page }) => {
       await open2(page, 'phase3-demo.musicxml', 'tb2');
       await page.reload();
