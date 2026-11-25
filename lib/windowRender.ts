@@ -105,7 +105,7 @@ export async function drawWindow(osmd: Osmd, xml: string, bars: number[], o: Dra
     const zw = (o.width - 2 * pad) / Math.max(1, w1 + UNIT * (r.PageLeftMargin + r.PageRightMargin));
     osmd.zoom = Math.max(0.3, Math.min(zw, cap));
     osmd.render();
-    return measure(osmd, host);
+    return measureLayout(osmd, host);
   }
   // bars one under the other: let OSMD break the line where the page width is used up, and spread the bars of each line
   // over the whole width (also the last line). Start as large as the height allows; a bar that needs more width than
@@ -133,7 +133,7 @@ export async function drawWindow(osmd: Osmd, xml: string, bars: number[], o: Dra
     if (need <= pageUnits + 0.05 && right <= limit + 1) break;
     zoom = Math.max(0.3, Math.min(zoom * Math.min(1, pageUnits / need, limit / Math.max(right, 1)) * 0.99, zoom));
   }
-  return measure(osmd, host);
+  return measureLayout(osmd, host);
 }
 
 /** Right edge in px of the furthest drawn bar. */
@@ -146,7 +146,7 @@ function rightEdge(osmd: Osmd, zoom: number): number {
   return right;
 }
 
-function measure(osmd: Osmd, host: HTMLElement): WindowLayout {
+export function measureLayout(osmd: Osmd, host: HTMLElement): WindowLayout {
   const svg = host.querySelector('svg') as SVGSVGElement | null;
   const hostRect = host.getBoundingClientRect();
   const zoom = osmd.zoom ?? 1;

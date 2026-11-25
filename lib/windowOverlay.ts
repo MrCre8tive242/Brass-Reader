@@ -78,7 +78,7 @@ export function windowOverlay(
 }
 
 function withLabels(o: Overlay, layout: WindowLayout, labels: string[]): Overlay {
-  const size = Math.max(9, Math.min(15, layout.space * 1.35));
+  const size = Math.max(9, Math.min(34, layout.space * 1.35));
   layout.bars.forEach((b, i) => {
     if (!b.w || !labels[i]) return;
     o.items.push({ x: b.x + b.w - 3, y: b.y + 0.2 * layout.space, shapes: [{ t: 'text', x: 0, y: size * 0.85, size, text: labels[i] === 'Pickup' ? 'Pickup' : `Bar ${labels[i]}`, anchor: 'end', muted: true }] });

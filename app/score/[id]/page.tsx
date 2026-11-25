@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ScoreView, { type ScoreViewHandle } from '@/components/ScoreView';
 import TwoBarView, { type TwoBarHandle } from '@/components/TwoBarView';
 import FingerStylePicker from '@/components/FingerStylePicker';
+import VideoDialog, { type VideoChoices } from '@/components/VideoDialog';
+import type { VideoJob } from '@/lib/videoRender';
 import { DEFAULT_FINGER_STYLE, normalizeFingerStyle, type FingerStyle } from '@/lib/fingerStyle';
 import Transport from '@/components/Transport';
 import InstrumentPicker from '@/components/InstrumentPicker';
@@ -99,6 +101,7 @@ export default function ScorePage() {
   const view = useRef<ScoreViewHandle>(null);
   const bars = useRef<TwoBarHandle>(null);
   const [viewMode, setViewMode] = useState<'full' | 'twobar'>('full');
+  const [videoOpen, setVideoOpen] = useState(false);
   const [fingerStyle, setFingerStyle] = useState<FingerStyle>(DEFAULT_FINGER_STYLE);
   const measureRef = useRef(1);
 
@@ -657,6 +660,7 @@ export default function ScorePage() {
           title={score.title}
           getMidi={() => toMidi(derived!.tl!, bpm, INSTRUMENTS[target].program, score.title, parts.map((p, i) => ({ name: p.name, program: INSTRUMENTS[i === myIdx ? target : p.instrument].program })), drums.inMidi && groove && drums.on ? drumEvents : undefined)}
           getXml={() => derived!.exportXml}
+          onVideo={derived?.tl && !derived.err ? () => setVideoOpen(true) : undefined}
         />
       </main>
       <PracticeSheet open={practiceOpen} onClose={() => setPracticeOpen(false)} tabs={practiceTabs}>
@@ -720,6 +724,30 @@ export default function ScorePage() {
           )}
         </Section>
       </PracticeSheet>
+      {videoOpen && derived?.tl && (
+        <VideoDialog
+          title={score.title}
+          instrumentName={INSTRUMENTS[target].name}
+          bpm={bpm}
+          tl={derived.tl}
+          slide={target === 'trombone'}
+          hasDrums={!!groove}
+          initial={{ view: viewMode === 'twobar' ? 'twobar' : 'full', orientation: 'portrait', style: fingerStyle, drums: drums.on }}
+          onChoose={(c) => changeFingerStyle(c.style)}
+          onClose={() => setVideoOpen(false)}
+          build={(c: VideoChoices): VideoJob => ({
+            title: score.title, instrumentName: INSTRUMENTS[target].name, bpm, xml: derived.mineXml, tl: derived.tl!, myIdx, instrument: target,
+            view: c.view, orientation: c.orientation, style: c.style,
+            audio: {
+              tl: derived.tl!, bpm,
+              partInstruments: parts.map((p, i) => (i === myIdx ? target : p.instrument)),
+              mix: parts.map((p) => mix[p.id] ?? DEFAULT_MIX),
+              drumHits: drumEvents, drumSource: groove ? { groove, buffer: drumBuf?.id === groove.id ? drumBuf.buffer : null } : null,
+              drumsOn: !!groove && c.drums, drumsVolume: drums.volume,
+            },
+          })}
+        />
+      )}
       {studioOpen && <GrooveStudio getCtx={() => player.current?.context ?? null} clickBpm={bpm} onClose={() => setStudioOpen(false)} onChanged={refreshGrooves} />}
       {toast && <p className="toast" role="status" data-testid="toast">{toast}</p>}
       <Transport

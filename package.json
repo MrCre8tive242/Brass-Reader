@@ -15,6 +15,7 @@
     "fast-xml-parser": "5.12.1",
     "idb-keyval": "6.3.0",
     "jszip": "3.10.2",
+    "mp4-muxer": "5.2.2",
     "next": "16.4.6",
     "opensheetmusicdisplay": "3.0.0",
     "pdfjs-dist": "6.5.438",
@@ -22,7 +23,8 @@
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "smplr": "1.2.0",
-    "web-audio-beat-detector": "8.2.39"
+    "web-audio-beat-detector": "8.2.39",
+    "webm-muxer": "5.1.4"
   },
   "devDependencies": {
     "@playwright/test": "1.65.1",

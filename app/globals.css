@@ -425,3 +425,18 @@ details.warn summary strong { margin-right: 0.25em; }
   .tb { --tb-ink: #efe3c9; --tb-muted: #b3a384; }
   .tb-host svg { filter: invert(1) hue-rotate(180deg); }
 }
+
+/* download video dialog */
+.vdlg-back { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.55); display: grid; place-items: center; padding: 12px; }
+.vdlg { width: min(520px, 100%); max-height: calc(100dvh - 24px); min-height: 0; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
+.vdlg-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 8px 0 18px; }
+.vdlg-head h2 { margin: 0; font-size: 1.2rem; }
+.vdlg-head h2:focus { outline: none; }
+.vdlg-body { min-height: 0; display: grid; gap: 12px; padding: 8px 18px 12px; overflow-y: auto; }
+.vdlg-body .seg { max-width: 100%; flex-wrap: wrap; }
+.vdlg-fs { border: 0; padding: 0; margin: 0; min-width: 0; }
+.vdlg-foot { display: flex; gap: 10px; justify-content: flex-end; padding: 10px 18px 16px; border-top: 1px solid var(--line); }
+.vbar { height: 12px; border-radius: 6px; background: var(--panel2); overflow: hidden; border: 1px solid var(--line); }
+.vbar i { display: block; height: 100%; background: var(--accent); transition: width 0.2s linear; }
+.vdone .btn { width: 100%; word-break: break-word; text-align: center; padding: 8px 14px; }
+@media (orientation: landscape) and (max-height: 520px) { .vdlg-body { gap: 8px; } .vdlg-foot { padding: 6px 18px 8px; } }
