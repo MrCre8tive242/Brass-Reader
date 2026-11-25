@@ -4,7 +4,7 @@ import type { Player } from '@/lib/player';
 import type { MicSession } from '@/lib/micSession';
 import type { Mic } from '@/lib/pitchMic';
 import { noteLabel, noteName } from '@/lib/pitchMic';
-import { MIN_CLARITY, PitchRun, micErrorMessage, summarise, type ExpectedNote, type NoteResult, type RunSummary } from '@/lib/pitch';
+import { LagTracker, MIN_CLARITY, PitchRun, SHOW_CLARITY, expectedAt, micErrorMessage, midiToFreq, summarise, type ExpectedNote, type NoteResult, type RunSummary } from '@/lib/pitch';
 import { AlertIcon, MicIcon } from './Icons';
 
 interface Props {
@@ -27,7 +27,12 @@ interface Props {
   drawerOpen: boolean;
 }
 
-const TICK_MS = 30;
+const TICK_MS = 20;
+const LAG_KEY = 'br-pitch-lag';
+
+function savedLag(): number {
+  try { const v = Number(localStorage.getItem(LAG_KEY)); return Number.isFinite(v) ? v : 0; } catch { return 0; }
+}
 
 export default function PitchPanel({ getPlayer, session, notes, playing, enabled, onEnabled, onResults, onLoopBar, partName, writtenToConcert, drawerOpen }: Props) {
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +49,12 @@ export default function PitchPanel({ getPlayer, session, notes, playing, enabled
   shiftRef.current = writtenToConcert;
   const cb = useRef({ onResults });
   cb.current = { onResults };
+  // how late this player's notes reach the microphone, learned while playing and kept for next time on this device
+  const lag = useRef<LagTracker | null>(null);
+  const [lagMs, setLagMs] = useState(0);
+  // the lowest note of the part decides how long the microphone listens at a time (a sousaphone needs longer than a trumpet)
+  const lowestHz = notes.length ? midiToFreq(notes.reduce((m, n) => Math.min(m, n.midi), Infinity)) : 0;
+  useEffect(() => { if (ready && mic.current && lowestHz > 0) mic.current.setLowest(lowestHz); }, [ready, lowestHz]);
 
   async function toggle() {
     if (enabled) {
@@ -90,20 +101,34 @@ export default function PitchPanel({ getPlayer, session, notes, playing, enabled
     if (!enabled || !ready) return;
     const run = playing ? new PitchRun(notesRef.current) : null;
     if (run) { setSummary(null); cb.current.onResults([]); }
+    const m0 = mic.current;
+    // a note's pitch can first be read once it fills most of what is listened to, and the attack has settled
+    if (!lag.current) lag.current = new LagTracker(savedLag(), (m0?.windowS ?? 0.085) / 4 + 0.03);
+    const tracker = lag.current;
+    let shown = Math.round(tracker.lagS * 1000);
+    setLagMs(shown);
     const id = setInterval(() => {
       const m = mic.current, p = getPlayer();
       if (!m || !p) return;
-      const r = m.read();
       const sh = shiftRef.current;
-      const label = r && r.clarity >= MIN_CLARITY ? noteLabel(r.midi - sh) : '';
+      const bpm = p.currentBpm;
+      // what is heard now was played for the moment a little ago: cursor delay + microphone delay (as the browser
+      // reports them), and what has been learned about this player and these speakers on top
+      const nominalQ = p.currentQ() - ((p.outputDelay() + m.latencyS) * bpm) / 60;
+      const q = nominalQ - (tracker.lagS * bpm) / 60;
+      const want = run ? expectedAt(notesRef.current, q) : null;
+      const r = m.read(want !== null ? midiToFreq(want) : null);
+      const label = r && r.clarity >= SHOW_CLARITY ? noteLabel(r.midi - sh) : '';
       if (label !== heardRef.current) {
         heardRef.current = label;
         setHeard(label ? { written: label, concert: sh !== 0 && r ? noteName(r.midi) : '' } : null);
       }
       if (!run) return;
-      // what is heard now was played for the moment a little ago: cursor delay + microphone delay
-      const q = p.currentQ() - ((p.outputDelay() + m.latencyS) * p.currentBpm) / 60;
-      const done = run.push(q, r && r.clarity >= MIN_CLARITY ? { midi: r.midi, clarity: r.clarity } : null);
+      const clear = r && r.clarity >= MIN_CLARITY ? r : null;
+      tracker.observe(notesRef.current, nominalQ, bpm, clear ? clear.midi : null);
+      const ms = Math.round(tracker.lagS * 1000);
+      if (Math.abs(ms - shown) >= 10) { shown = ms; setLagMs(ms); try { localStorage.setItem(LAG_KEY, String(tracker.lagS)); } catch { /* private mode */ } }
+      const done = run.push(q, clear ? { midi: clear.midi, clarity: clear.clarity } : null);
       if (done.length) cb.current.onResults(run.results.slice());
     }, TICK_MS);
     return () => {
@@ -133,6 +158,12 @@ export default function PitchPanel({ getPlayer, session, notes, playing, enabled
           </span>
         )}
       </div>
+      {enabled && Math.abs(lagMs) >= 30 && (
+        <p className="muted small" data-testid="pitch-lag">
+          Your notes reach the microphone about {Math.abs(lagMs)} ms {lagMs > 0 ? 'late' : 'early'} (speakers, headphones and reaction time); the check allows for it.{' '}
+          <button type="button" className="linkbtn inline" onClick={() => { lag.current?.reset(); setLagMs(0); try { localStorage.removeItem(LAG_KEY); } catch { /* ignore */ } }}>Forget it</button>
+        </p>
+      )}
       {enabled && !playing && !summary && <p className="muted small">Press Play and play your part. Green = in tune, yellow = a little sharp or flat, red = wrong note or missed.</p>}
       {summary && (
         <div className="psummary" data-testid="pitch-summary" role="status">

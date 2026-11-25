@@ -1,20 +1,27 @@
 import { PitchDetector } from 'pitchy';
-import { freqToMidi } from './pitch';
+import { NoiseGate, freqToMidi, resolveOctave, windowFor } from './pitch';
 
 export interface MicReading { midi: number; clarity: number; rms: number }
 
 export interface Mic {
   stream: MediaStream;
-  /** Latest pitch heard, or null for silence / no clear pitch. */
-  read(): MicReading | null;
+  /**
+   * Latest pitch heard, or null for silence, room noise or no clear pitch. `expectedHz` is the note the part has
+   * at this moment, when there is one: it settles whether a low note was heard in the right octave.
+   */
+  read(expectedHz?: number | null): MicReading | null;
   /** Seconds between a sound reaching the microphone and `read()` seeing it (device + half the analysis window). */
   latencyS: number;
+  /** Seconds of sound that are analysed at a time. */
+  windowS: number;
+  /** Tell the microphone the lowest note it will have to follow (Hz): low notes need a longer listen, high ones a shorter one. */
+  setLowest(hz: number): void;
   stop(): void;
 }
 
-const FFT = 4096; // 85 ms at 48 kHz: long enough for a sousaphone's low E (41 Hz)
 const MIN_HZ = 28;
 const MAX_HZ = 2100;
+const DEFAULT_LOW_HZ = 82; // E2: right for trombone and baritone until the part says otherwise
 
 /** Open the microphone for pitch reading (no echo cancelling or levelling: they bend the pitch). Throws a DOMException-like error. */
 export async function openMic(ctx: AudioContext): Promise<Mic> {
@@ -23,24 +30,38 @@ export async function openMic(ctx: AudioContext): Promise<Mic> {
   const stream = await md.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
   const source = ctx.createMediaStreamSource(stream);
   const analyser = ctx.createAnalyser();
-  analyser.fftSize = FFT;
   source.connect(analyser); // not to the speakers: that would feed back
-  const detector = PitchDetector.forFloat32Array(FFT);
-  const buf = new Float32Array(FFT);
   const track = stream.getAudioTracks()[0];
-  const deviceLatency = Number((track?.getSettings() as { latency?: number } | undefined)?.latency);
-  const latencyS = (Number.isFinite(deviceLatency) && deviceLatency > 0 ? deviceLatency : 0.03) + FFT / ctx.sampleRate / 2;
-  return {
+  const reported = Number((track?.getSettings() as { latency?: number } | undefined)?.latency);
+  const deviceLatency = Number.isFinite(reported) && reported > 0 ? reported : 0.03;
+  const gate = new NoiseGate();
+  let size = 0;
+  let detector = PitchDetector.forFloat32Array(2048);
+  let buf = new Float32Array(2048);
+  const mic: Mic = {
     stream,
-    latencyS,
-    read() {
+    latencyS: 0,
+    windowS: 0,
+    setLowest(hz: number) {
+      const n = windowFor(hz > 0 ? hz : DEFAULT_LOW_HZ, ctx.sampleRate);
+      if (n === size) return;
+      size = n;
+      analyser.fftSize = n;
+      detector = PitchDetector.forFloat32Array(n);
+      buf = new Float32Array(n);
+      mic.windowS = n / ctx.sampleRate;
+      mic.latencyS = deviceLatency + n / ctx.sampleRate / 2;
+    },
+    read(expectedHz) {
       analyser.getFloatTimeDomainData(buf);
       let sum = 0;
-      for (let i = 0; i < FFT; i++) sum += buf[i] * buf[i];
-      const rms = Math.sqrt(sum / FFT);
-      if (rms < 0.008) return null;
-      const [hz, clarity] = detector.findPitch(buf, ctx.sampleRate);
-      if (!Number.isFinite(hz) || hz < MIN_HZ || hz > MAX_HZ) return null;
+      for (let i = 0; i < size; i++) sum += buf[i] * buf[i];
+      const rms = Math.sqrt(sum / size);
+      if (rms < 0.002) { gate.pass(rms, 0); return null; } // silence: nothing to measure
+      const [found, clarity] = detector.findPitch(buf, ctx.sampleRate);
+      if (!gate.pass(rms, Number.isFinite(clarity) ? clarity : 0)) return null;
+      if (!Number.isFinite(found) || found < MIN_HZ || found > MAX_HZ) return null;
+      const hz = expectedHz && clarity >= 0.6 ? resolveOctave(buf, ctx.sampleRate, found, expectedHz) : found;
       return { midi: freqToMidi(hz), clarity, rms };
     },
     stop() {
@@ -48,6 +69,8 @@ export async function openMic(ctx: AudioContext): Promise<Mic> {
       for (const t of stream.getTracks()) t.stop();
     },
   };
+  mic.setLowest(DEFAULT_LOW_HZ);
+  return mic;
 }
 
 const NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
