@@ -20,6 +20,20 @@ interface RecordProps {
   onCancel: () => void;
 }
 
+/** "1 Record, 2 Check tempo, 3 Save": where the player is in making a groove. */
+export function RecorderSteps({ current }: { current: 1 | 2 | 3 }) {
+  const steps = ['Record', 'Check tempo', 'Save'];
+  return (
+    <ol className="steps" aria-label="Steps to make a groove" data-testid="rec-steps">
+      {steps.map((w, i) => (
+        <li key={w} className={i + 1 === current ? 'cur' : i + 1 < current ? 'done' : ''} aria-current={i + 1 === current ? 'step' : undefined}>
+          <span className="n" aria-hidden>{i + 1}</span> {w}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function click(ctx: AudioContext, t: number, accent: boolean) {
   const o = ctx.createOscillator(), g = ctx.createGain();
   o.frequency.value = accent ? 1500 : 1000;
@@ -101,7 +115,8 @@ export function GrooveRecorder({ getCtx, clickBpm, onDone, onCancel }: RecordPro
   const busy = phase !== 'idle';
   return (
     <div className="grec" data-testid="groove-recorder">
-      <p className="muted small">Put the phone near the drums. Use headphones for the count-in click so the microphone does not hear it. Record one to four bars of the drum line, or more: you choose the loop next. The longest recording is {MAX_RECORD_S} seconds.</p>
+      <RecorderSteps current={1} />
+      <p className="muted small">Put the phone near the drums. Use headphones for the count-in click so the microphone does not hear it. Record a few bars of the drum line (one to four is plenty). Next you pick how many bars make the loop. The longest recording is {MAX_RECORD_S} seconds.</p>
       {error && <p className="error" role="alert"><AlertIcon size={18} /> {error}</p>}
       <div className="prow">
         <span className="plabel">Click tempo</span>
@@ -147,6 +162,7 @@ export function GrooveReview({ getCtx, samples, rate, analysis, existing, wav, o
   const [feel, setFeel] = useState<Feel>(existing?.feel ?? 'straight');
   const [name, setName] = useState(existing?.name ?? `Drum line ${new Date().toLocaleDateString()}`);
   const taps = useRef<number[]>([]);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   const slices = useMemo(() => buildSlices(analysis.onsets, dur, down, bpm, bars), [analysis.onsets, dur, down, bpm, bars]);
   const groove = useMemo<Groove>(() => ({
@@ -185,6 +201,8 @@ export function GrooveReview({ getCtx, samples, rate, analysis, existing, wav, o
 
   return (
     <div className="grec" data-testid="groove-review">
+      <RecorderSteps current={2} />
+      <h3 className="stephead"><span className="n" aria-hidden>2</span> Check the tempo and the downbeat</h3>
       {analysis.onsets.length === 0 && <p className="error" role="alert"><AlertIcon size={18} /> No drum hits were found. Move the phone closer, or record again louder.</p>}
       <Waveform samples={samples} rate={rate} onsets={analysis.onsets} downbeatS={down} loopS={loopSeconds(bars, bpm)} barS={barS} onDownbeat={(s) => setDown(Math.round(s * 1000) / 1000)} />
       <div className="prow">
@@ -206,25 +224,24 @@ export function GrooveReview({ getCtx, samples, rate, analysis, existing, wav, o
         {tooLong && <span className="muted small">The recording after the downbeat is shorter than {bars} bars.</span>}
       </div>
       <div className="prow">
-        <label className="plabel" htmlFor="quant">Quantize {Math.round(quant * 100)}%</label>
+        <label className="plabel" htmlFor="quant">Tighten the timing {Math.round(quant * 100)}%</label>
         <input id="quant" type="range" min={0} max={100} value={Math.round(quant * 100)} onChange={(e) => setQuant(Number(e.target.value) / 100)} aria-label="Quantize" className="grow" />
       </div>
       <div className="prow" role="group" aria-label="Snap to">
-        <span className="plabel">Snap to</span>
+        <span className="plabel">Snap hits to</span>
         {(['straight', 'triplet'] as Feel[]).map((f) => <button key={f} type="button" className={`btn sm${feel === f ? ' on' : ''}`} aria-pressed={feel === f} onClick={() => setFeel(f)}>{f === 'straight' ? 'Sixteenths' : 'Triplets'}</button>)}
       </div>
       <p className="muted small">0% keeps the drummers&apos; own feel. 100% puts every hit exactly on the grid.</p>
-      <div className="prow">
-        <button type="button" className="btn" onClick={() => (preview.playing ? preview.stop() : preview.play(groove, buffer, bpm))} aria-label={preview.playing ? 'Stop the loop' : 'Hear the loop'}>{preview.playing ? 'Stop' : 'Hear the loop'}</button>
-        <span className="muted small" data-testid="slice-count">{slices.length} hits in the loop</span>
-      </div>
+      <h3 className="stephead"><span className="n" aria-hidden>3</span> Name it and save</h3>
       <label className="field">
         <span className="plabel">Name</span>
         <input type="text" className="txt" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} aria-label="Groove name" />
       </label>
-      <div className="prow">
+      <div className="prow sticky-bar" data-testid="review-bar">
+        <button type="button" className="btn" onClick={() => (preview.playing ? preview.stop() : preview.play(groove, buffer, bpm))} aria-label={preview.playing ? 'Stop the loop' : 'Hear the loop'}>{preview.playing ? 'Stop' : 'Hear the loop'}</button>
         <button type="button" className="btn primary" onClick={() => { preview.stop(); save(); }} disabled={slices.length === 0}>Save groove</button>
-        <button type="button" className="btn ghost" onClick={() => { preview.stop(); onCancel(); }}>{existing ? 'Close' : 'Discard'}</button>
+        <button type="button" className={`btn ghost${confirmDiscard ? ' danger' : ''}`} onClick={() => { preview.stop(); if (existing || confirmDiscard) onCancel(); else setConfirmDiscard(true); }}>{existing ? 'Close' : confirmDiscard ? 'Really discard?' : 'Discard'}</button>
+        <span className="muted small" data-testid="slice-count">{slices.length} hits in the loop</span>
       </div>
     </div>
   );

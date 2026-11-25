@@ -19,14 +19,14 @@ interface Props {
 const LONG_PRESS_MS = 450;
 const STATE_WORD = ['empty', 'soft', 'on', 'accent'];
 
-function Cell({ label, value, beatStart, onSet }: { label: string; value: number; beatStart: boolean; onSet: (v: number) => void }) {
+function Cell({ label, value, beatNo, brush, onSet }: { label: string; value: number; /** 1-based beat number on the first step of every beat. */ beatNo: number | null; brush: number; onSet: (v: number) => void }) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const long = useRef(false);
   const clear = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
   return (
     <button
       type="button"
-      className={`cell v${value}${beatStart ? ' beat' : ''}`}
+      className={`cell v${value}${beatNo ? ' beat' : ''}`}
       aria-label={`${label}: ${STATE_WORD[value]}`}
       aria-pressed={value > 0}
       data-v={value}
@@ -38,10 +38,12 @@ function Cell({ label, value, beatStart, onSet }: { label: string; value: number
       onClick={(e) => {
         if (long.current) { long.current = false; return; }
         // keyboard: Enter/Space toggle; with Shift, an accent
-        onSet(e.detail === 0 && e.shiftKey ? 3 : value > 0 ? 0 : 2);
+        onSet(e.detail === 0 && e.shiftKey ? 3 : value === brush ? 0 : brush);
       }}
       onKeyDown={(e) => { if (e.key === 'a') onSet(value === 3 ? 2 : 3); else if (e.key === 's') onSet(value === 1 ? 0 : 1); }}
-    />
+    >
+      {beatNo ? <span className="beatno" aria-hidden>{beatNo}</span> : null}
+    </button>
   );
 }
 
@@ -52,6 +54,20 @@ export default function KitEditor({ getCtx, existing, from, onSave, onCancel }: 
   const [feel, setFeel] = useState<Feel>(existing?.feel ?? 'straight');
   const [bpm, setBpm] = useState(110);
   const [starter, setStarter] = useState(!!from?.starter);
+  /** What a tap puts on a step: soft, normal or accent (press and hold on a step is an accent, too). */
+  const [brush, setBrush] = useState(2);
+  // how many steps fit on a line while every step stays at least 48 px wide: a whole beat per line on a narrow phone
+  const wrap = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(360);
+  useEffect(() => {
+    const el = wrap.current;
+    if (!el) return;
+    const set = () => setWidth(el.clientWidth || 360);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const preview = useGroovePreview(getCtx);
 
   const groove: Groove = { id: existing?.id ?? 'preview', name, kind: 'kit', createdAt: existing?.createdAt ?? Date.now(), feel, pattern };
@@ -63,10 +79,11 @@ export default function KitEditor({ getCtx, existing, from, onSave, onCancel }: 
   useEffect(() => { if (first.current) { first.current = false; return; } if (playing) play(); }, [sig]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (inst: KitInst, i: number, v: number) => setPattern((p) => ({ ...p, tracks: { ...p.tracks, [inst]: p.tracks[inst].map((x, k) => (k === i ? v : x)) } }));
-  const perRow = pattern.steps === 16 ? 8 : 6;
+  const per = pattern.steps === 16 ? 4 : 3;
+  const perRow = [pattern.steps, pattern.steps / 2, per].find((n) => n * 48 + (n - 1) * 5 <= width) ?? per;
 
   return (
-    <div className="kit" data-testid="kit-editor">
+    <div className="kit" data-testid="kit-editor" ref={wrap}>
       {starter && <p className="starter-note" data-testid="starter-label">{STARTER_LABEL}</p>}
       <div className="prow" role="group" aria-label="Steps per bar">
         <span className="plabel">Steps per bar</span>
@@ -83,7 +100,18 @@ export default function KitEditor({ getCtx, existing, from, onSave, onCancel }: 
           {(['straight', 'triplet'] as Feel[]).map((f) => <button key={f} type="button" className={`btn sm${feel === f ? ' on' : ''}`} aria-pressed={feel === f} onClick={() => setFeel(f)}>{f === 'straight' ? 'Straight' : 'Triplet swing'}</button>)}
         </div>
       )}
-      <p className="muted small">Tap a step to switch it on or off. Press and hold for an accent (tap again off, hold again for normal).</p>
+      <div className="prow" role="group" aria-label="What a tap puts on a step" data-testid="brush">
+        <span className="plabel">A tap makes a step</span>
+        {([[1, 'Soft'], [2, 'Normal'], [3, 'Accent']] as const).map(([v, w]) => (
+          <button key={v} type="button" className={`btn sm brush${brush === v ? ' on' : ''}`} aria-pressed={brush === v} onClick={() => setBrush(v)}>
+            <span className={`swatch v${v}`} aria-hidden /> {w}
+          </button>
+        ))}
+      </div>
+      <p className="muted small legend" data-testid="legend">
+        <span><span className="swatch v0" aria-hidden /> empty</span> <span><span className="swatch v1" aria-hidden /> soft</span> <span><span className="swatch v2" aria-hidden /> normal</span> <span><span className="swatch v3" aria-hidden /> accent</span>.
+        {' '}Tap a step to put the chosen strength on it; tap it again to clear it. Press and hold for an accent. The numbers are the beats.
+      </p>
       {Array.from({ length: pattern.bars }, (_, b) => (
         <div key={b} className="kitbar" data-testid="kit-bar">
           {pattern.bars > 1 && <h3 className="kitbar-h">Bar {b + 1}</h3>}
@@ -93,15 +121,14 @@ export default function KitEditor({ getCtx, existing, from, onSave, onCancel }: 
               <div className="cells" style={{ gridTemplateColumns: `repeat(${perRow}, minmax(0, 1fr))` }}>
                 {Array.from({ length: pattern.steps }, (_, i) => {
                   const idx = b * pattern.steps + i;
-                  const per = pattern.steps === 16 ? 4 : 3;
-                  return <Cell key={i} label={`${k.label}${pattern.bars > 1 ? ` bar ${b + 1}` : ''} step ${i + 1}`} value={pattern.tracks[k.id][idx]} beatStart={i % per === 0} onSet={(v) => set(k.id, idx, v)} />;
+                  return <Cell key={i} label={`${k.label}${pattern.bars > 1 ? ` bar ${b + 1}` : ''} step ${i + 1}`} value={pattern.tracks[k.id][idx]} beatNo={i % per === 0 ? i / per + 1 : null} brush={brush} onSet={(v) => set(k.id, idx, v)} />;
                 })}
               </div>
             </div>
           ))}
         </div>
       ))}
-      <div className="prow">
+      <div className="prow sticky-bar">
         <span className="plabel">Tempo</span>
         <NumField value={bpm} label="Preview tempo BPM" min={40} max={240} onCommit={setBpm} />
         <button type="button" className="btn" onClick={() => (playing ? preview.stop() : play())} aria-label={playing ? 'Stop the pattern' : 'Hear the pattern'}>{playing ? 'Stop' : 'Hear the pattern'}</button>

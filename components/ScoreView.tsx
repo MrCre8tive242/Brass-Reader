@@ -12,6 +12,8 @@ const MARK_COLOR: Record<NoteMark['kind'], string> = { green: '#1c9c47', yellow:
 export interface ScoreViewHandle {
   /** Move the cursor + bar highlight to quarter-note position q. */
   setPosition: (q: number, measure: number, offsetQ?: number) => void;
+  /** Scroll so the cursor is between the header and whatever covers the bottom of the screen (transport, practice drawer). */
+  ensureVisible: () => void;
 }
 
 interface Props {
@@ -66,6 +68,8 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
   loopRef.current = loop;
   const gesture = useRef<{ bar: number; x: number; y: number; dragging: boolean; timer?: ReturnType<typeof setTimeout>; mouse: boolean } | null>(null);
   const swallowClick = useRef(false);
+  /** Bar being pressed and held (a ring fills while the long press counts down). */
+  const [holdBar, setHoldBar] = useState(0);
   const noteEls = useRef<Map<string, SVGElement[]> | null>(null);
   const painted = useRef<{ els: SVGElement[]; added: Element[]; groups: SVGElement[] }>({ els: [], added: [], groups: [] });
 
@@ -176,8 +180,11 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
     // keep the cursor between the sticky header and the (measured) transport
     const header = (document.querySelector('.topbar') as HTMLElement | null)?.offsetHeight ?? 60;
     const transport = (document.querySelector('.transport') as HTMLElement | null)?.offsetHeight ?? 150;
+    // the practice drawer covers the bottom of the score when it is a full-width bottom sheet
+    const sheet = document.querySelector('.sheet:not([hidden])') as HTMLElement | null;
+    const sheetH = sheet && sheet.offsetWidth >= window.innerWidth - 2 ? sheet.offsetHeight : 0;
     const topLimit = header + 10;
-    const bottomBand = vh - transport - 10;
+    const bottomBand = vh - transport - sheetH - 10;
     const sysChanged = Math.abs(top - lastSystemY.current) > 20;
     lastSystemY.current = top;
     if (force || r.top < topLimit || r.bottom > bottomBand || sysChanged && (r.top > topLimit + (bottomBand - topLimit) * 0.55)) {
@@ -186,7 +193,10 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
     }
   }
 
-  useImperativeHandle(ref, () => ({ setPosition: (q, m, off) => place(q, m, true, off ?? 0) }), []);
+  useImperativeHandle(ref, () => ({
+    setPosition: (q, m, off) => place(q, m, true, off ?? 0),
+    ensureVisible: () => autoScroll(osmdRef.current?.cursor?.cursorElement as HTMLElement | undefined),
+  }), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -413,6 +423,8 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
       if (gesture.current !== g || g.dragging) return;
       g.dragging = true; // a long press: swallow the click that follows
       swallowClick.current = true;
+      setHoldBar(0);
+      try { navigator.vibrate?.(15); } catch { /* not every phone can */ }
       const l = loopRef.current;
       // a second long press beyond the loop stretches it, inside it starts a new one
       if (l && bar < l.from) selectRef.current?.(bar, l.to);
@@ -420,12 +432,13 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
       else selectRef.current?.(bar, bar);
     }, 500);
     gesture.current = g;
+    if (!g.mouse) setHoldBar(bar);
   }
   function onPointerMove(e: React.PointerEvent) {
     const g = gesture.current;
     if (!g) return;
     const moved = Math.hypot(e.clientX - g.x, e.clientY - g.y);
-    if (!g.mouse) { if (moved > 10 && !g.dragging) { clearTimeout(g.timer); gesture.current = null; } return; }
+    if (!g.mouse) { if (moved > 10 && !g.dragging) { clearTimeout(g.timer); gesture.current = null; setHoldBar(0); } return; }
     if (moved < 6 && !g.dragging) return;
     const bar = barAt(e.clientX, e.clientY);
     if (!bar) return;
@@ -439,6 +452,7 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
     const g = gesture.current;
     if (g) clearTimeout(g.timer);
     gesture.current = null;
+    setHoldBar(0);
     // the click (if any) comes right after pointerup; make sure a stale flag cannot swallow a later tap
     if (swallowClick.current) setTimeout(() => { swallowClick.current = false; }, 60);
   }
@@ -454,8 +468,11 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
       <div className="score-inner" onClick={onClick} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endGesture} onPointerCancel={endGesture} onPointerLeave={endGesture} onContextMenu={(e) => { if (gesture.current?.dragging || swallowClick.current) e.preventDefault(); }}>
         <div className="score-host" ref={host} />
         {layout > 0 && loop && boxes.current.slice(loop.from - 1, loop.to).map((b, i) => (
-          b && b.w > 0 ? <div key={`loop${loop.from + i}`} className="loop-mark" data-testid="loop-mark" style={{ transform: `translate(${b.x}px, ${b.y}px)`, width: b.w, height: b.h }} /> : null
+          b && b.w > 0 ? <div key={`loop${loop.from + i}`} className={`loop-mark${i === 0 ? ' first' : ''}${i === loop.to - loop.from ? ' last' : ''}`} data-testid="loop-mark" data-label={i === 0 ? (loop.from === loop.to ? 'Loop' : `Loop ${loop.from}–${loop.to}`) : undefined} style={{ transform: `translate(${b.x}px, ${b.y}px)`, width: b.w, height: b.h }} /> : null
         ))}
+        {layout > 0 && holdBar > 0 && boxes.current[holdBar - 1]?.w > 0 && (
+          <div className="hold-ring" data-testid="hold-ring" style={{ transform: `translate(${boxes.current[holdBar - 1].x}px, ${boxes.current[holdBar - 1].y}px)`, width: boxes.current[holdBar - 1].w, height: boxes.current[holdBar - 1].h }}><i /></div>
+        )}
         <div className="bar-hl" ref={hl} data-testid="bar-highlight" />
         {layout > 0 && (flagged ?? []).map((m) => {
           const b = boxes.current[m - 1];

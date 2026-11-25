@@ -5,6 +5,14 @@ export class MicSession {
   private mic: Mic | null = null;
   private opening: Promise<Mic> | null = null;
   private users = 0;
+  private listeners = new Set<(live: boolean) => void>();
+
+  /** Called with true when the microphone opens and false when it closes (for the "mic is on" light). */
+  subscribe(fn: (live: boolean) => void): () => void {
+    this.listeners.add(fn);
+    return () => { this.listeners.delete(fn); };
+  }
+  private emit() { const live = this.mic !== null; for (const fn of this.listeners) fn(live); }
 
   async acquire(ctx: AudioContext): Promise<Mic> {
     this.users++;
@@ -13,6 +21,7 @@ export class MicSession {
         this.opening ??= openMic(ctx);
         this.mic = await this.opening;
         this.opening = null;
+        this.emit();
       }
       return this.mic;
     } catch (e) {
@@ -24,7 +33,7 @@ export class MicSession {
 
   release() {
     this.users = Math.max(0, this.users - 1);
-    if (this.users === 0 && this.mic) { this.mic.stop(); this.mic = null; }
+    if (this.users === 0 && this.mic) { this.mic.stop(); this.mic = null; this.emit(); }
   }
 
   get active() { return this.users > 0; }

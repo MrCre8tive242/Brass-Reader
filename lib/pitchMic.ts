@@ -51,6 +51,11 @@ export async function openMic(ctx: AudioContext): Promise<Mic> {
 }
 
 const NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+/** Note name without the cents ("Bb4"). */
+export function noteName(midi: number): string {
+  const r = Math.round(midi);
+  return `${NAMES[((r % 12) + 12) % 12]}${Math.floor(r / 12) - 1}`;
+}
 /** "Bb4 +12" for a fractional MIDI number. */
 export function noteLabel(midi: number): string {
   const r = Math.round(midi);

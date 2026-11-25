@@ -45,13 +45,13 @@ export default function DrumsPanel({ settings, grooves, status, onChange, onOpen
       )}
       {g?.kind === 'recorded' && <p className="muted small">Recorded at {Math.round((g.bpm ?? 0) * 10) / 10} BPM. At other tempos each hit is played again on the beat grid, so the sound stays real.</p>}
       <label className="chk wide">
-        <input type="checkbox" checked={settings.inTakes} onChange={(e) => onChange({ inTakes: e.target.checked })} aria-label="Drums while recording" /> Keep the drums while recording and in take replays
+        <input type="checkbox" checked={settings.inTakes} onChange={(e) => onChange({ inTakes: e.target.checked })} aria-label="Drums while recording" /> Keep drums while recording
       </label>
       <label className="chk wide">
         <input type="checkbox" checked={settings.inMidi} onChange={(e) => onChange({ inMidi: e.target.checked })} aria-label="Drum track in MIDI" /> Add a drum track to the MIDI download
       </label>
       <div className="prow">
-        <button type="button" className="btn sm primary" onClick={onOpenStudio}>Grooves…</button>
+        <button type="button" className="btn sm primary" data-testid="open-studio" onClick={onOpenStudio}>Grooves…</button>
       </div>
       <p className="muted small">The drums start on beat one of bar one (after the count-in) and follow the tempo, seeking and the loop. They are never part of the pitch check or Mute my part.</p>
     </div>

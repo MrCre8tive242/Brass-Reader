@@ -80,3 +80,27 @@ NOT TESTED
 - Loop plus repeats/endings (loop follows the first time each bar is played); loop on multi-part scores with different repeat structures per part.
 - Long scores with marks/fingerings switched on (the 160-bar performance test runs with both off).
 - Feature D (drums): built afterwards, see DRUMS_PLAN.md Handoff Notes.
+
+## Fix pass 2 (QA_PHASE2_UX.md and QA_PHASE2_PROD.md)
+
+Fixed
+- Keyboard: Space only plays when focus is not on a button, summary, link, `[role=button]` etc.; arrows and Space do nothing behind the Grooves studio. (`app/score/[id]/page.tsx`)
+- Real dialogs: `components/useModal.ts` (focus in, Tab trap, Escape, `inert` page behind, focus returns to the opener, modal stack so the studio can open over the drawer). Used by `PracticeSheet` (the transport stays in the Tab loop and usable) and `GrooveStudio` (Escape in a sub-view goes back to the list). `aria-modal`, `aria-controls` on the Practice button.
+- Practice drawer: Loop section first and open, section chips under the title (they open and scroll to a section), "Practice" shown on the top-bar button (icon dropped under 400 px), slimmer header, the score can scroll above the bottom sheet (`--sheet-h`) and the cursor is brought into view when it opens. On short landscape screens it is a full-height side panel (54 vw, 300-520 px) above the transport; on narrow landscape (568x320) the transport's second row hides while it is open.
+- Clipping and touch: `.chk.wide` wraps, shorter drums copy, every `.btn.sm`, link button, "No sound?" summary and chip is 48x48 or more; step cells are at least 48 px (a whole beat per line on a narrow phone, 8 per line when it fits). New e2e audits check 320 and 390 px (drawer with every section open, studio list, step editor).
+- Step editor: beat numbers on the first step of each beat, a "A tap makes a step: Soft / Normal / Accent" brush (touch way to a soft step) that doubles as the legend, stronger empty cells (visible in the light theme), sticky Tempo / Hear the pattern bar.
+- Recorder: "1 Record, 2 Check tempo, 3 Save" step header and section headings, plain wording ("Tighten the timing", "Snap hits to"), sticky Hear the loop / Save / Discard bar, Discard asks twice, clearer first paragraph. "Your grooves" is listed before the starters once there is one.
+- Groove export: `navigator.share({files})` where `canShare` allows it, otherwise a download; a notice names the file. Groove preview of a missing or garbled recording shows an error on that row.
+- Loop: first-use tip under the pickers (gone after the first loop), a ring fills while a bar is held (cancelled when the finger moves), a short vibration and a toast when the loop starts, a "Loop bars a-b / Exit loop" chip above the score, and a dashed, hatched, labelled blue frame instead of a tinted bar that looked like the cursor. Next/Previous bar or a tap outside the loop exits the loop and says so in a toast. After a speed-trainer run the player's own tempo comes back when the music stops.
+- Mic: a "Mic on" light above the transport whenever the microphone is open (`MicSession.subscribe`); the pitch check keeps its setting but closes the microphone while paused with the drawer shut, and reopens it on Play or when the drawer opens. `PitchRun` now leaves notes that were over before listening began (late microphone, start mid-score, a seek forward) unjudged instead of red.
+- Pitch readout shows the WRITTEN note for the instrument being played ("Hearing C5 +3"), with "(sounds Bb4)" in small text for transposing instruments.
+- Music data: sousaphone chart and range extended to F4 (added the Bb3, D4 and F4 harmonics; F#3 to Bb3 now read 2-3, 1-2, 1, 2, 0). Valve alternates pruned to 3 for 1-2 and trumpet/mellophone G5 = 0 or 1-3; the list and the reasoning are in a comment above `EXTRA_ALTERNATES` in `lib/fingering.ts`. Trombone alternates are unchanged. Side effect: `autoOctave` for a trumpet part on the sousaphone is now -1 (was -2) because the range is higher.
+
+Not fixed (and why)
+- PROD P2-1 CSP `eval` probe: harmless, `'unsafe-eval'` deliberately not added.
+- PROD P2-6 loop number fields racing under automated fast input: the report says it is not reachable by a person with Enter/blur between fields.
+- UX P2-11 contrast of `--muted` helper text in the light theme: measured about 5.9:1 on the panel colour, left as is.
+- A half-height "peek" drawer, a moving playhead in the step editor, a per-note text alternative for pitch-check colours, and an accessible name for the loop frame on the score were suggestions, not in the fix list, and were not built.
+- Not tested: real iOS Safari (share sheet, vibration, long-press), screen readers, real microphones (the mic light and the late-opening microphone were tested with Chromium's fake device only).
+
+Tests after this pass: see the commit message of the last commit (unit and e2e totals were rerun in full).

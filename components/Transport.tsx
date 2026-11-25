@@ -11,6 +11,8 @@ interface Props {
   barTotal?: number;
   /** "Pass 3 · 85 → 120 BPM" while a practice loop is set. */
   passLabel?: string;
+  /** The microphone is open (pitch check or recording): a light stays on until it closes. */
+  micLive?: boolean;
   bpm: number;
   metronome: boolean;
   countIn: boolean;
@@ -77,6 +79,7 @@ export default function Transport(p: Props) {
   const pickup = p.barLabel === 'Pickup';
   return (
     <div className="transport" role="group" aria-label="Playback controls" ref={rootRef}>
+      {p.micLive && <p className="micline" data-testid="mic-live" role="status"><span className="micdot" aria-hidden /> Mic on</p>}
       {p.passLabel && <p className="passline" data-testid="pass-label" role="status">{p.passLabel}</p>}
       <div className="row main">
         <div className="barcount" data-testid="bar-counter" aria-live="off">

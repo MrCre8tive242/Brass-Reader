@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useModal } from './useModal';
 import { deleteGroove, listGrooves, renameGroove, saveGroove, type StoredGroove } from '@/lib/grooveStore';
 import { STARTER_LABEL, grooveBars, makeGrooveFile, parseGrooveFile, starterGrooves, type KitPattern } from '@/lib/groove';
 import { newId } from '@/lib/library';
@@ -24,6 +25,23 @@ type View =
   | { k: 'kit'; existing?: StoredGroove; from?: { name: string; pattern: KitPattern; starter: boolean } }
   | { k: 'review'; samples: Float32Array; rate: number; analysis: Analysis; existing?: StoredGroove };
 
+/** Send the file with the phone's share sheet when it can take files; otherwise download it. Returns what happened. */
+async function shareOrDownload(data: BlobPart, type: string, name: string): Promise<'shared' | 'downloaded' | 'cancelled'> {
+  const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
+  try {
+    const file = new File([data], name, { type });
+    if (typeof nav.share === 'function' && nav.canShare?.({ files: [file] })) {
+      await nav.share({ files: [file], title: name });
+      return 'shared';
+    }
+  } catch (e) {
+    // the person closed the share sheet: nothing to do. Any other failure falls back to a download.
+    if ((e as Error).name === 'AbortError') return 'cancelled';
+  }
+  download(data, type, name);
+  return 'downloaded';
+}
+
 function download(data: BlobPart, type: string, name: string) {
   const url = URL.createObjectURL(new Blob([data], { type }));
   const a = document.createElement('a');
@@ -45,6 +63,9 @@ export default function GrooveStudio({ getCtx, clickBpm, onClose, onChanged }: P
   const [renaming, setRenaming] = useState<{ id: string; text: string } | null>(null);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
+  /** Why a groove could not be played, shown on its own row. */
+  const [rowError, setRowError] = useState<{ id: string; text: string } | null>(null);
+  const root = useRef<HTMLDivElement>(null);
   const buffers = useRef(new Map<string, AudioBuffer>());
   const preview = useGroovePreview(getCtx);
 
@@ -65,12 +86,14 @@ export default function GrooveStudio({ getCtx, clickBpm, onClose, onChanged }: P
 
   async function togglePreview(g: StoredGroove) {
     if (previewId === g.id) { preview.stop(); return; }
-    setError(null);
+    setError(null); setRowError(null);
+    const fail = () => { preview.stop(); setPreviewId(null); setRowError({ id: g.id, text: 'This recording could not be played: the file is missing or damaged. Record it again or import it again.' }); };
     try {
       const buf = await decode(g);
+      if (g.kind === 'recorded' && !buf) { fail(); return; }
       setPreviewId(g.id);
       preview.play(g, buf, g.kind === 'recorded' ? g.bpm ?? 100 : 110);
-    } catch { setError('That recording could not be played.'); }
+    } catch { fail(); }
   }
 
   async function edit(g: StoredGroove) {
@@ -90,7 +113,10 @@ export default function GrooveStudio({ getCtx, clickBpm, onClose, onChanged }: P
     try {
       const audio = g.audio ? { mime: g.audio.type || 'audio/wav', bytes: new Uint8Array(await g.audio.arrayBuffer()) } : undefined;
       const slug = g.name.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'groove';
-      download(makeGrooveFile(g, audio), 'application/json', `${slug}.groove.json`);
+      const file = `${slug}.groove.json`;
+      const how = await shareOrDownload(makeGrooveFile(g, audio), 'application/json', file);
+      if (how === 'shared') setNotice(`Shared ${file}.`);
+      else if (how === 'downloaded') setNotice(`Saved ${file} to your downloads. Send that file to the band; they use “Import a groove file”.`);
     } catch { setError('Could not make the file.'); }
   }
 
@@ -122,13 +148,75 @@ export default function GrooveStudio({ getCtx, clickBpm, onClose, onChanged }: P
     setView({ k: 'list' });
   }
 
+  const goBack = () => { preview.stop(); if (view.k === 'list') onClose(); else setView({ k: 'list' }); };
+  const backRef = useRef(goBack);
+  backRef.current = goBack;
+  useModal({ open: true, ref: root, onClose: () => backRef.current(), inert: ['.topbar', 'main.page', '.sheet', '.transport'], returnTo: '[data-testid="open-studio"]' });
+
   const title = view.k === 'list' ? 'Grooves' : view.k === 'record' ? 'Record your drum line' : view.k === 'kit' ? 'Step pattern' : view.existing ? 'Edit groove' : 'Your recording';
 
+  // what the band recorded comes first once there is something to show
+  const mineBlock = (
+    <>
+            <h3 className="sec">Your grooves</h3>
+            {items.length === 0
+              ? <p className="muted" data-testid="no-grooves">No grooves yet. Record your drummers, then play along.</p>
+              : (
+                <ul className="grooves">
+                  {items.map((g) => (
+                    <li key={g.id} className="groove" data-testid="groove-row">
+                      <div className="ginfo">
+                        {renaming?.id === g.id
+                          ? (
+                            <form className="prow" onSubmit={(e) => { e.preventDefault(); void renameGroove(g.id, renaming.text).then(() => { setRenaming(null); refresh(); onChanged(); }); }}>
+                              <input className="txt" value={renaming.text} maxLength={60} autoFocus onChange={(e) => setRenaming({ id: g.id, text: e.target.value })} aria-label="New name" />
+                              <button type="submit" className="btn sm primary">Save name</button>
+                            </form>
+                          )
+                          : <strong data-testid="groove-name">{g.name}</strong>}
+                        <span className="muted small">{meta(g)}</span>
+                        {rowError?.id === g.id && <p className="error" role="alert" data-testid="preview-error"><AlertIcon size={18} /> {rowError.text}</p>}
+                      </div>
+                      <div className="gbtns">
+                        <button type="button" className="btn sm" onClick={() => togglePreview(g)} aria-label={`${previewId === g.id ? 'Stop' : 'Play'} ${g.name}`}>{previewId === g.id ? 'Stop' : 'Play'}</button>
+                        <button type="button" className="btn sm" onClick={() => (g.kind === 'recorded' ? edit(g) : setView({ k: 'kit', existing: g }))} aria-label={`Edit ${g.name}`}>Edit</button>
+                        <button type="button" className="btn sm ghost" onClick={() => setRenaming({ id: g.id, text: g.name })} aria-label={`Rename ${g.name}`}>Rename</button>
+                        <button type="button" className="btn sm ghost" onClick={() => exportOne(g)} aria-label={`Export ${g.name}`}>Export</button>
+                        {confirmDel === g.id
+                          ? <button type="button" className="btn sm danger" onClick={() => remove(g)} aria-label={`Really delete ${g.name}`}>Delete it?</button>
+                          : <button type="button" className="btn sm ghost" onClick={() => setConfirmDel(g.id)} aria-label={`Delete ${g.name}`}><TrashIcon size={18} /></button>}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+    </>
+  );
+  const starterBlock = (
+    <>
+            <h3 className="sec">Starter patterns</h3>
+            <div data-testid="starter-list">
+              <p className="starter-note">{STARTER_LABEL}</p>
+              <ul className="grooves">
+                {starterGrooves().map((g) => (
+                  <li key={g.id} className="groove" data-testid="starter-row">
+                    <div className="ginfo"><strong>{g.name}</strong><span className="muted small">{meta(g)}</span>{rowError?.id === g.id && <p className="error" role="alert" data-testid="preview-error"><AlertIcon size={18} /> {rowError.text}</p>}</div>
+                    <div className="gbtns">
+                      <button type="button" className="btn sm" onClick={() => togglePreview(g)} aria-label={`${previewId === g.id ? 'Stop' : 'Play'} ${g.name}`}>{previewId === g.id ? 'Stop' : 'Play'}</button>
+                      <button type="button" className="btn sm" onClick={() => { preview.stop(); setView({ k: 'kit', from: { name: g.name.replace(/^Starter /, ''), pattern: g.pattern!, starter: true } }); }} aria-label={`Edit a copy of ${g.name}`}>Edit a copy</button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+    </>
+  );
+
   return (
-    <div className="studio" role="dialog" aria-label="Grooves" data-testid="groove-studio">
+    <div className="studio" ref={root} role="dialog" aria-modal="true" aria-labelledby="studio-title" data-testid="groove-studio">
       <header className="studio-head">
-        <button type="button" className="tbtn" onClick={() => { if (view.k === 'list') { preview.stop(); onClose(); } else { preview.stop(); setView({ k: 'list' }); } }} aria-label={view.k === 'list' ? 'Close grooves' : 'Back to grooves'}><BackIcon size={22} /></button>
-        <h2>{title}</h2>
+        <button type="button" className="tbtn" onClick={goBack} aria-label={view.k === 'list' ? 'Close grooves' : 'Back to grooves'}><BackIcon size={22} /></button>
+        <h2 id="studio-title" tabIndex={-1} data-autofocus>{title}</h2>
       </header>
       <div className="studio-body">
         {error && <p className="error" role="alert"><AlertIcon size={18} /> {error}</p>}
@@ -153,52 +241,7 @@ export default function GrooveStudio({ getCtx, clickBpm, onClose, onChanged }: P
               </label>
             </div>
             <p className="muted small">Grooves stay on this device. Export one to send it to the band: the file holds the recording too.</p>
-            <h3 className="sec">Starter patterns</h3>
-            <div data-testid="starter-list">
-              <p className="starter-note">{STARTER_LABEL}</p>
-              <ul className="grooves">
-                {starterGrooves().map((g) => (
-                  <li key={g.id} className="groove" data-testid="starter-row">
-                    <div className="ginfo"><strong>{g.name}</strong><span className="muted small">{meta(g)}</span></div>
-                    <div className="gbtns">
-                      <button type="button" className="btn sm" onClick={() => togglePreview(g)} aria-label={`${previewId === g.id ? 'Stop' : 'Play'} ${g.name}`}>{previewId === g.id ? 'Stop' : 'Play'}</button>
-                      <button type="button" className="btn sm" onClick={() => { preview.stop(); setView({ k: 'kit', from: { name: g.name.replace(/^Starter /, ''), pattern: g.pattern!, starter: true } }); }} aria-label={`Edit a copy of ${g.name}`}>Edit a copy</button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <h3 className="sec">Your grooves</h3>
-            {items.length === 0
-              ? <p className="muted" data-testid="no-grooves">No grooves yet. Record your drummers, then play along.</p>
-              : (
-                <ul className="grooves">
-                  {items.map((g) => (
-                    <li key={g.id} className="groove" data-testid="groove-row">
-                      <div className="ginfo">
-                        {renaming?.id === g.id
-                          ? (
-                            <form className="prow" onSubmit={(e) => { e.preventDefault(); void renameGroove(g.id, renaming.text).then(() => { setRenaming(null); refresh(); onChanged(); }); }}>
-                              <input className="txt" value={renaming.text} maxLength={60} autoFocus onChange={(e) => setRenaming({ id: g.id, text: e.target.value })} aria-label="New name" />
-                              <button type="submit" className="btn sm primary">Save name</button>
-                            </form>
-                          )
-                          : <strong data-testid="groove-name">{g.name}</strong>}
-                        <span className="muted small">{meta(g)}</span>
-                      </div>
-                      <div className="gbtns">
-                        <button type="button" className="btn sm" onClick={() => togglePreview(g)} aria-label={`${previewId === g.id ? 'Stop' : 'Play'} ${g.name}`}>{previewId === g.id ? 'Stop' : 'Play'}</button>
-                        <button type="button" className="btn sm" onClick={() => (g.kind === 'recorded' ? edit(g) : setView({ k: 'kit', existing: g }))} aria-label={`Edit ${g.name}`}>Edit</button>
-                        <button type="button" className="btn sm ghost" onClick={() => setRenaming({ id: g.id, text: g.name })} aria-label={`Rename ${g.name}`}>Rename</button>
-                        <button type="button" className="btn sm ghost" onClick={() => exportOne(g)} aria-label={`Export ${g.name}`}>Export</button>
-                        {confirmDel === g.id
-                          ? <button type="button" className="btn sm danger" onClick={() => remove(g)} aria-label={`Really delete ${g.name}`}>Delete it?</button>
-                          : <button type="button" className="btn sm ghost" onClick={() => setConfirmDel(g.id)} aria-label={`Delete ${g.name}`}><TrashIcon size={18} /></button>}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
+            {items.length > 0 ? <>{mineBlock}{starterBlock}</> : <>{starterBlock}{mineBlock}</>}
           </>
         )}
       </div>

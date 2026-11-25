@@ -72,6 +72,7 @@ export default function ScorePage() {
   const [trainer, setTrainer] = useState<Trainer>(DEFAULT_TRAINER);
   const [pass, setPass] = useState<{ n: number; bpm: number } | null>(null);
   const mic = useMemo(() => new MicSession(), []);
+  useEffect(() => mic.subscribe(setMicLive), [mic]);
   const [fingerings, setFingerings] = useState(false);
   const [rangeOn, setRangeOn] = useState(true);
   const [shifts, setShifts] = useState<OctaveShift[]>([]);
@@ -83,6 +84,13 @@ export default function ScorePage() {
   const [saved, setSaved] = useState<Groove[]>([]);
   const [drumBuf, setDrumBuf] = useState<{ id: string; buffer: AudioBuffer | null; failed?: boolean } | null>(null);
   const [recBusy, setRecBusy] = useState(false);
+  const [micLive, setMicLive] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [loopHintSeen, setLoopHintSeen] = useState(true);
+  /** The tempo you set yourself, kept while the speed trainer drives the player's tempo, and put back when it stops. */
+  const trainerBase = useRef<number | null>(null);
+  const bpmNow = useRef(100);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const player = useRef<Player | null>(null);
   const view = useRef<ScoreViewHandle>(null);
   const measureRef = useRef(1);
@@ -168,10 +176,19 @@ export default function ScorePage() {
     const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const ctx = new AC({ latencyHint: 'interactive' });
     const p = new Player(ctx);
-    p.onState = (v) => { setPlaying(v); if (v) setBlocked(false); };
+    p.onState = (v) => {
+      setPlaying(v);
+      if (v) setBlocked(false);
+      // the speed trainer changed the tempo while it ran: when the music stops, the tempo you chose comes back
+      else if (trainerBase.current !== null) { setBpm(trainerBase.current); trainerBase.current = null; }
+    };
     p.onBlocked = () => setBlocked(true);
     // a loop pass became audible: show it, and follow the speed trainer's tempo (the player already runs at it)
-    p.onPass = (n, b) => { setPass({ n, bpm: b }); setBpm(b); };
+    p.onPass = (n, b) => {
+      setPass({ n, bpm: b });
+      if (trainerBase.current === null) trainerBase.current = bpmNow.current;
+      setBpm(b);
+    };
     p.onPosition = (q, m, off) => {
       view.current?.setPosition(q, m, off);
       if (m !== measureRef.current) { measureRef.current = m; setMeasure(m); }
@@ -227,6 +244,7 @@ export default function ScorePage() {
     }
   }, [derived]);
 
+  bpmNow.current = bpm;
   useEffect(() => { player.current?.setBpm(bpm); }, [bpm]);
   // practice loop + trainer reach the player (after the timeline, so the bars map onto it)
   useEffect(() => {
@@ -246,14 +264,39 @@ export default function ScorePage() {
   }, [id]);
   const changeTrainer = useCallback((t: Trainer) => { setTrainer(t); void updateScore(id, { trainer: t }); }, [id]);
   // picking bars on the score: loop them and park the cursor at the start
+  const say = useCallback((text: string) => {
+    setToast(text);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 4500);
+  }, []);
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+  useEffect(() => { setLoopHintSeen(lsGet('brass-reader:loop-hint') === '1'); }, []);
   const pickLoop = useCallback((from: number, to: number) => {
     const n = normalizeLoop({ from, to }, measureCountRef.current);
     if (!n) return;
     changeLoop(n);
     if (!player.current?.isPlaying) player.current?.seek(n.from);
-  }, [changeLoop]);
+    lsSet('brass-reader:loop-hint', '1'); setLoopHintSeen(true);
+    say(n.from === n.to ? `Looping bar ${n.from}. Exit the loop above the score, or in Practice.` : `Looping bars ${n.from} to ${n.to}. Exit the loop above the score, or in Practice.`);
+  }, [changeLoop, say]);
+  // opening the drawer: keep the bar being played in view above it
+  useEffect(() => {
+    if (!practiceOpen) return;
+    const t = setTimeout(() => view.current?.ensureVisible(), 120);
+    return () => clearTimeout(t);
+  }, [practiceOpen]);
+  const loopRef = useRef<LoopRange | null>(null);
+  loopRef.current = loop;
+  /** A seek or next/previous bar that lands outside the practice loop leaves the loop (and says so), instead of silently ignoring it. */
+  const leaveLoopIfOutside = useCallback((m: number) => {
+    const l = normalizeLoop(loopRef.current, measureCountRef.current);
+    if (!l || (m >= l.from && m <= l.to)) return;
+    changeLoop(null);
+    say(`Left the loop (bars ${l.from}–${l.to}): you moved to bar ${m}. Press and hold a bar to loop again.`);
+  }, [changeLoop, say]);
+  const seekGuarded = useCallback((m: number) => { player.current?.seek(m); leaveLoopIfOutside(m); }, [leaveLoopIfOutside]);
   // persist only on user changes (writing from an effect would overwrite the stored value with the default before it is read)
-  const changeBpm = useCallback((n: number) => { setBpm(n); lsSet(`bpm:${id}`, String(n)); }, [id]);
+  const changeBpm = useCallback((n: number) => { trainerBase.current = null; setBpm(n); lsSet(`bpm:${id}`, String(n)); }, [id]);
   useEffect(() => { if (player.current) player.current.metronome = metronome; }, [metronome]);
   useEffect(() => { if (player.current) player.current.countIn = countIn; }, [countIn]);
   // click and count-in are habits, not per-score settings: remember them
@@ -355,21 +398,27 @@ export default function ScorePage() {
     if (p.isPlaying) p.pause(); else void p.play();
   }, []);
   const seekTo = useCallback((m: number) => {
-    player.current?.seek(m);
+    seekGuarded(m);
     setChecksOpen(false);
-  }, []);
+  }, [seekGuarded]);
   const goBar = useCallback((delta: number) => {
     const p = player.current;
     if (!p || !p.measureCount) return;
     p.stepBar(delta);
-  }, []);
+    leaveLoopIfOutside(p.measure);
+  }, [leaveLoopIfOutside]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
       const t = e.target as HTMLElement | null;
-      // typing / toggling in a form control must not start playback
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      if (e.code === 'Space') { e.preventDefault(); playPause(); }
+      // typing or sliding in a form control keeps its own keys
+      if (t && (t.isContentEditable || /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName))) return;
+      // the Grooves studio is a screen of its own: nothing behind it reacts to the keyboard
+      if (document.querySelector('[data-testid="groove-studio"]')) return;
+      // Space presses a button, opens a summary, follows a link, toggles a step: only play when focus is not on one
+      const onControl = !!t?.closest?.('button, summary, a, [role="button"], [role="checkbox"], [role="switch"], [role="slider"], [role="tab"], [role="menuitem"]');
+      if (e.code === 'Space') { if (onControl) return; e.preventDefault(); playPause(); }
       else if (e.code === 'ArrowLeft') { e.preventDefault(); goBar(-1); }
       else if (e.code === 'ArrowRight') { e.preventDefault(); goBar(1); }
     };
@@ -450,13 +499,19 @@ export default function ScorePage() {
     );
   }
   const many = parts.length > 1;
+  const practiceTabs = [
+    { id: 'loop', label: 'Loop' }, { id: 'band', label: 'Band' }, { id: 'range', label: 'Range' },
+    { id: 'fingerings', label: target === 'trombone' ? 'Slide' : 'Fingering' }, { id: 'pitch', label: 'Pitch' },
+    { id: 'record', label: 'Record' }, { id: 'drums', label: 'Drums' },
+  ];
+  const loopShown = normalizeLoop(loop, measureCount);
 
   return (
     <div className="player-page">
       <header className="topbar">
         <Link href="/" className="back" aria-label="Back to library"><BackIcon /></Link>
         <h1 className="title">{score.title}</h1>
-        <button type="button" className="practice-btn" aria-label="Practice" aria-expanded={practiceOpen} onClick={() => setPracticeOpen((o) => !o)}><LoopIcon size={24} /></button>
+        <button type="button" className="practice-btn" aria-expanded={practiceOpen} aria-controls="practice-sheet" aria-haspopup="dialog" onClick={() => setPracticeOpen((o) => !o)}><LoopIcon size={22} /><span>Practice</span></button>
         <div className="zoom" role="group" aria-label="Score size">
           <button type="button" onClick={() => changeZoom(-ZOOM_STEP)} aria-label="Zoom out" disabled={zoom <= ZOOM_MIN}>A−</button>
           <button type="button" onClick={() => changeZoom(ZOOM_STEP)} aria-label="Zoom in" disabled={zoom >= ZOOM_MAX}>A+</button>
@@ -510,6 +565,14 @@ export default function ScorePage() {
             <p className="muted small">Tap a line to jump to that bar. Flagged bars are marked on the score.</p>
           </details>
         )}
+        {loopShown
+          ? (
+            <div className="loopchip" role="group" aria-label="Practice loop" data-testid="loop-chip">
+              <span><strong>Loop</strong> {loopShown.from === loopShown.to ? `bar ${loopShown.from}` : `bars ${loopShown.from}–${loopShown.to}`}{trainer.enabled ? ' with speed trainer' : ''}</span>
+              <button type="button" className="btn sm ghost" onClick={() => changeLoop(null)}>Exit loop</button>
+            </div>
+          )
+          : !loopHintSeen && derived && !derived.err && <p className="muted small loophint" data-testid="loop-hint">Tip: press and hold a bar to loop it (drag with a mouse). More loop tools are in Practice.</p>}
         {derived && !derived.err && (
           <ScoreView
             ref={view}
@@ -520,7 +583,7 @@ export default function ScorePage() {
             labels={fingerLabels}
             loop={normalizeLoop(loop, measureCount)}
             onLoopSelect={pickLoop}
-            onSeekMeasure={(m) => player.current?.seek(m)}
+            onSeekMeasure={seekGuarded}
             onReady={() => setScoreReady(true)}
             onError={setError}
           />
@@ -532,7 +595,10 @@ export default function ScorePage() {
           getXml={() => derived!.exportXml}
         />
       </main>
-      <PracticeSheet open={practiceOpen} onClose={() => setPracticeOpen(false)}>
+      <PracticeSheet open={practiceOpen} onClose={() => setPracticeOpen(false)} tabs={practiceTabs}>
+        <Section id="loop" title="Loop and speed trainer" open>
+          <LoopPanel measureCount={measureCount} loop={normalizeLoop(loop, measureCount)} draft={loopDraft} trainer={trainer} onDraft={setLoopDraft} onLoop={changeLoop} onTrainer={changeTrainer} />
+        </Section>
         <Section id="band" title={parts.length > 1 ? `Band (${parts.length} parts)` : 'Band'}>
           <BandPanel
             parts={parts} myIdx={myIdx} mix={mix} full={full} scoreId={id} warnings={derived?.warnings ?? []}
@@ -580,7 +646,7 @@ export default function ScorePage() {
             getPlayer={getPlayer} session={mic} notes={myNotes} playing={playing} enabled={pitchOn}
             onEnabled={(v) => { setPitchOn(v); if (!v) setPitchResults([]); }}
             onResults={setPitchResults} onLoopBar={(m) => pickLoop(m, m)}
-            partName={INSTRUMENTS[target].name}
+            partName={INSTRUMENTS[target].name} writtenToConcert={INSTRUMENTS[target].writtenToConcert} drawerOpen={practiceOpen}
           />
         </Section>
         <Section id="record" title="Record yourself">
@@ -589,11 +655,9 @@ export default function ScorePage() {
         <Section id="drums" title="Drums">
           <DrumsPanel settings={drums} grooves={allGrooves} status={drumStatus} onChange={changeDrums} onOpenStudio={() => setStudioOpen(true)} />
         </Section>
-        <Section id="loop" title="Loop and speed trainer" open>
-          <LoopPanel measureCount={measureCount} loop={normalizeLoop(loop, measureCount)} draft={loopDraft} trainer={trainer} onDraft={setLoopDraft} onLoop={changeLoop} onTrainer={changeTrainer} />
-        </Section>
       </PracticeSheet>
       {studioOpen && <GrooveStudio getCtx={() => player.current?.context ?? null} clickBpm={bpm} onClose={() => setStudioOpen(false)} onChanged={refreshGrooves} />}
+      {toast && <p className="toast" role="status" data-testid="toast">{toast}</p>}
       <Transport
         playing={playing}
         measure={measure}
@@ -601,6 +665,7 @@ export default function ScorePage() {
         barLabel={tlNow?.barLabels[measure - 1]}
         barTotal={tlNow?.barTotal}
         passLabel={loop && pass ? passLabel(pass.n, pass.bpm, trainer) : undefined}
+        micLive={micLive}
         bpm={bpm}
         metronome={metronome}
         countIn={countIn}

@@ -75,6 +75,11 @@ export class PitchRun {
       this.judged = this.notes.map(() => false);
       this.buf = this.notes.map(() => []);
     }
+    // the first reading (the check began mid-score, or the microphone opened late) and a jump forward (a seek):
+    // notes that were already over were never listened to, so they are left unjudged instead of marked missed
+    if (this.prevQ === -Infinity || q - this.prevQ > 1.5) {
+      for (let i = 0; i < this.notes.length; i++) if (!this.judged[i] && this.win[i][1] < q) this.judged[i] = true;
+    }
     this.prevQ = q;
     for (let i = 0; i < this.notes.length; i++) {
       if (this.win[i][0] > q) { if (this.notes[i].timeQ > q + 8) break; continue; }

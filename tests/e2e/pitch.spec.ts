@@ -13,7 +13,8 @@ test.describe('C1. pitch check with a real (fake-device) microphone: the right n
     await openPractice(page, 'pitch');
     await expect(page.getByTestId('pitch-heard')).toBeHidden();
     await page.getByRole('button', { name: 'Start pitch check' }).click();
-    await expect(page.getByTestId('pitch-heard')).toContainText(/Hearing Bb4/, { timeout: 10_000 });
+    await expect(page.getByTestId('pitch-heard')).toContainText(/Hearing C5/, { timeout: 10_000 }); // written C5 on a Bb trumpet; it sounds Bb4
+    await expect(page.getByTestId('pitch-heard')).toContainText('sounds Bb4');
     await page.getByRole('button', { name: 'Close practice tools' }).click();
     await page.getByLabel('BPM', { exact: true }).fill('240');
     await page.getByLabel('BPM', { exact: true }).blur();

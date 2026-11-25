@@ -56,6 +56,22 @@ describe('following a play-through', () => {
     expect(run.results.map((r) => r?.status)).toEqual(['green', 'yellow', 'red', 'red']);
     expect(run.results[3]?.reason).toBe('missed');
   });
+  it('notes that were over before the check started listening are left unjudged, not marked missed', () => {
+    const run = new PitchRun(notes);
+    for (let q = 2; q < 4.2; q += 0.05) run.push(q, { midi: q < 3 ? 64 : 65, clarity: 0.97 });
+    run.finish();
+    expect(run.results.map((r) => r?.status)).toEqual([undefined, undefined, 'green', 'green']);
+  });
+  it('a jump forward (seek) does not mark the skipped notes as missed', () => {
+    const run = new PitchRun(notes);
+    for (let q = 0; q < 1; q += 0.05) run.push(q, { midi: 60, clarity: 0.97 });
+    for (let q = 3; q < 4.2; q += 0.05) run.push(q, { midi: 65, clarity: 0.97 });
+    run.finish();
+    expect(run.results[0]?.status).toBe('green');
+    expect(run.results[1]).toBeUndefined();
+    expect(run.results[2]).toBeUndefined();
+    expect(run.results[3]?.status).toBe('green');
+  });
   it('a perfect run is 100 %', () => {
     const run = play([60, 62, 64, 65]);
     const s = summarise(notes, run.results);
