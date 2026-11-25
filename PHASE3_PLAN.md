@@ -76,3 +76,83 @@ V2 (video)
 - e2e (Playwright, Chromium, `npm run e2e`): 122 passed (all existing ones plus 15 for the 2-bar view and 5 for the video).
 - `npm run build` passes.
 - Screenshots were looked at (375x812 and 844x390, scale 1, all four styles, trumpet and trombone, dense eighths, ledger lines, sparse bars); fixes made from them: bars now fill the width, bar names above the staff, stems/beams cleared by the fingering row, faint cells around dot groups so neighbours read apart, slide icon narrowed.
+
+## Phase 3 Refinement Log
+
+Refinement pass over V1 (2-bar view) and V2 (video), in the order it was asked for. Where this log and the Handoff Notes above disagree, this log is the newer one.
+
+### Found on the way (bugs in what was handed over)
+- **The video had almost no sound when the sample horns were loaded.** The sample player (`smplr`) keeps notes that lie more than 0.2 s ahead in a queue and hands them to the audio engine by a timer on the wall clock. An offline render does not wait for that timer, so only the first notes got in: a 17 s test video had 0.45 s of music and then silence. (The synth fallback was not affected, which is why it went unnoticed.) Offline renders now pass the sample player a scheduler that hands every note over at once (`createVoice(..., { offline: true })` in `lib/voices.ts`). Every video test now checks that each second of the result has sound.
+- **Full-sheet video:** fingerings of other pages were drawn over the title (nothing was clipped to the page). The page is now clipped to its card, only the page's own fingerings are drawn, and the page is drawn a little larger when its lines do not fill the card.
+- This Chromium can encode H.264 after all (it was thought not to): only AAC is missing. So H.264 in an MP4 is now exercised for real here (with Opus sound).
+
+### 1. iPhone Safari export
+- **Which file a browser gets** is decided in `lib/videoSupport.ts` (`chooseRoute`), from yes/no answers of the browser, in this order:
+  1. H.264 + AAC in an MP4 through WebCodecs, faster than real time. (Current iPhones: Safari 26 has both encoders. Android Chrome. Desktop Chrome on Windows/macOS.) Several H.264 profile/level strings are tried (`avc1.640028` first: High, level 4.0, the lowest that holds 1080p30); AAC is tried at 48 kHz, then 44.1 kHz, and the sound is rendered at the rate that was accepted.
+  2. Apple device without an AAC encoder (iPhones before iOS 26 have a VideoEncoder but no AudioEncoder at all): **real-time recording with MediaRecorder, which makes a proper MP4 (H.264 + AAC) on Safari.** As long as the song, but a file Photos and WhatsApp take. Preferred there over anything with Opus or WebM.
+  3. H.264 + Opus in an MP4, faster than real time (Chrome/Chromium on Linux; an Apple device with neither AAC nor MediaRecorder MP4).
+  4. WebM (VP9, then VP8, + Opus), faster than real time.
+  5. Real-time recording: MP4 if `MediaRecorder` can, else WebM.
+- No pure-JavaScript AAC encoder was added: none with an MIT/BSD/Apache licence and a maintained build was found, and writing PCM or ALAC into a .mov is not something WhatsApp can be trusted with.
+- **The dialog asks first** (both shapes are probed when it opens) and says in plain words what the file will be and, for the real-time way, how long it takes. If only the other shape can be an MP4 it says so.
+- **If the quick way breaks half-way** (an encoder error, e.g. a phone taking the hardware encoder away), the same frames and sound are recorded in real time instead, and the result says so.
+- **User-gesture rules:** the real-time way needs a running `AudioContext`, which a phone only starts from a tap. It is created inside the "Make video" tap (always on iPhone/iPad, so it is also there for the fallback), before any `await`. Saving is a second, fresh tap on the finished screen: **Save to Photos or share** calls `navigator.share({ files: [File] })` straight from the click (iOS: "Save Video" puts it in Photos; WhatsApp and AirDrop are in the same sheet); **Download file** is a plain `<a download>` (Files app). On phones the share sheet is the big button, on computers the download is. A failed share says to use the download.
+- Also: screen wake lock while it works; the real-time way stops with a clear message if the page is left (the recording would have a hole); the canvas is on the page while recording (a canvas off the page is not captured by every browser), which doubles as a live preview; a small player on the finished screen; the music player is paused when the dialog opens.
+- The notation picture is loaded with `onload` first and `decode()` second (some browsers reject `decode()` for SVG pictures); `roundRect` has a fallback.
+
+### 2. Memory for long songs
+- **Sound in pieces** (`lib/videoAudio.ts`, `AudioRenderer`): the sound is rendered in 20 s pieces, each in its own `OfflineAudioContext`, handed to the encoder and dropped. Longest buffer: about 8 MB (20 s + lead-in, stereo, 48 kHz) instead of about 115 MB for a 5-minute song (and twice that on the old real-time path, which copied it).
+  - Each piece starts early enough to hold every sound still ringing at its start, at least 1.5 s early (so the drum compressor and the limiter have settled), and on a whole audio block (128 frames): compressors work block by block, and only then is a piece sample-for-sample what one long render would give. Measured: pieces against one long render differ by less than 0.000002 of full scale, with sample horns, kit drums, recorded drums and three parts.
+  - The kit drums' small random differences (which take, pitch and loudness nudges) are fixed for the whole song up front, so a hit sounds the same in whichever piece it is rendered.
+  - Decoded samples are shared between the pieces (the context's `decodeAudioData` is given a memory), the sample file is read once, and **only the pitches the part plays are loaded** (a full instrument is about 88 notes, roughly 100 MB decoded; a part uses 10 to 25).
+  - Kit drum sounds are computed once per sample rate, not once per piece.
+  - The real-time way renders each piece while the one before it plays, and frees it after.
+- **File in blocks** (`lib/videoMux.ts`, `lib/blobSink.ts`): the muxers write through a stream target in 1 MB blocks; each block becomes a `Blob` at once (browsers keep those outside the page's memory and may put them on disk) and the blocks are joined at the end. The MP4 index goes at the end of the file (like a camera file), so nothing has to be kept to write it first. Before: every encoded frame in memory plus one buffer of the whole file.
+- At most 3 frames wait for the encoder (was 8).
+- Measured in headless Chromium (software H.264 encoder, which lives in the page's process; an iPhone's hardware encoder does not), 5 minutes, 150 bars, trumpet and kit drums, 1080×1920: made in about 105 s; the page's process sat at 630 to 750 MB the whole time against 430 MB with the score just open, **flat from the first seconds to the last** (no growth with the length of the song). File: 17 MB (2 bars), 28 MB (full sheet).
+- Video bit rate target lowered from 2.5 to 2 Mbit/s (the picture is mostly still; files come out far below the target).
+
+### 3. 2-bar view
+- Looked at 390×844 and 844×390, light and dark, deviceScaleFactor 1: trumpet, trombone (slide icon), sousaphone, dense eighths, ledger lines, ties, key changes. Notes are as large as the width (upright) or the height (sideways) allows; the dark look is readable (white notes on a brown highlight). No change to the drawing was needed.
+- **A−/A+ are hidden in the 2-bar view**: the bars always fill the screen, so the buttons had nothing to do there.
+- **One fingering style setting, also in Practice.** The Fingerings section of the Practice drawer has the same Numbers / Valve dots / Both / Off picker (same stored setting as under the bars and in the video dialog), and its header says the style in use. The full sheet now writes fingerings in that style too (dots or slide icon over the number; tapping still steps through the other ways to play a note, and the dots follow). The tick box there now only says whether the full sheet shows them ("Show fingerings on the full sheet too", off by default as before; greyed when the style is Off).
+- Fingerings under the right note heads: unchanged (already tested note by note); the same check now also runs on the full sheet for dots.
+
+### 4. Video look
+- Looked at frames taken out of real files with ffmpeg: 2 bars and full sheet, 1080×1920 and 1920×1080, a 150-bar score, a 3-part score, with and without drums.
+- Header: title, instrument · BPM, **"Bar 12 of 48"**. Count-in: **"1 2 3 4"** in the bar number's place, the beat being counted large and orange, the first bars waiting on screen with a faint highlight and no moving line.
+- 2 bars, landscape: drawn larger (they filled 70% of the width before). Full sheet: page fitted to the card, clipped, bar number at the start of every line, rounded progress line.
+- **Count-in bar** (new option, on by default): one bar of the player's count-in clicks before the music (before a pickup it counts up to the pickup). Without it nobody can come in with a play-along video.
+- **Loudness:** the player's mix peaks far below full scale when few parts play (a trumpet alone: about −30 dB mean). The video's mix is turned up by an amount worked out from what is in it (up to 3×; nothing when the drums are in), with a limiter behind it that only works if that guess was too bold. The balance between parts and drums is the player's.
+- A video with every part muted and no drums says "This video has no sound".
+- Recorded grooves and band scores in the video's sound are now tested (the drums alone are rendered and measured; each part alone is).
+
+### 5. Other
+- Result screen: save buttons above the player (on a phone turned sideways the player pushed them off screen).
+- "Make another" brings the choices back instead of making the same video again.
+
+### Dependencies
+- None added. `mp4-muxer` 5.2.2 (MIT) and `webm-muxer` 5.1.4 (MIT) are used as before, now through their stream targets.
+
+### Test hooks
+- `window.__brVideo` (already there): now also the format words, the sample engine and the loudness of every second.
+- With `window.__brTest` set before the page loads, the video dialog exposes `window.__brVideoLib` and `window.__brVideoJob` so a test can render the sound whole and in pieces and compare.
+
+### Tests after this pass
+- Unit (vitest, `npm test`): **486 passed** in 31 files (was 448). New: `videoSupport.test.ts` (which file each kind of browser gets, Apple detection, save buttons), `blobSink.test.ts`, `videoMux.test.ts` (MP4 and WebM written block by block; **real H.264 + AAC streams from ffmpeg put together by the app's writer and decoded by ffmpeg without a complaint**, skipped where ffmpeg is not installed), `videoAudio.test.ts` (pieces, lead-ins, block alignment, drum dice), count-in and frame timing in `videoPlan.test.ts`, `markOfText` in `fingerStyle.test.ts`.
+- e2e (Playwright, Chromium, `npm run e2e -- --trace off`): **141 passed** in 25 files (was 122).
+  - `video.spec.ts` (16): MP4 with H.264 really encoded (2 bars and full sheet; ffprobe: h264, 1080×1920, 30 fps, 300 pictures, sound 48 kHz stereo, decodes clean; sound in every second), landscape without count-in, WebM when H.264 is refused (decodes clean), shape tip, real-time recording, fallback to real time when the encoder breaks half-way, cancel, synth sound without a signal, silent video, pretended current iPhone (Safari's user agent and answers; MP4 route, sound context made in the tap, share sheet given the right file, download still there), pretended older iPhone (real-time MP4, one sound context made in the tap), failed share, pieces of sound against one long render with kit drums.
+  - `video-groove.spec.ts` (2): a recorded groove (fake microphone) is in the video's sound, on every second, and pieces still join; a two-part score sounds each part.
+  - `twobar.spec.ts` (+4), `fingering.spec.ts` (+3): hidden size buttons, the shared style picker in Practice, styles on the full sheet, tapping dots, trombone slide icon.
+  - The video file is its own Playwright project, listed first, so its heavy encoding runs next to screen-only tests and is over before the microphone tests start (run next to them it made one of them miss notes). Running one file works as before.
+- `npm run build` passes.
+- Looked at (deviceScaleFactor 1): 2-bar view at 390×844 and 844×390 in light and dark (trumpet, trombone, sousaphone; three scores); full sheet with dots; Practice Fingerings section; the video dialog before, during and after at both sizes, light and dark, as a pretended iPhone; frames taken with ffmpeg from 2-bar and full-sheet videos in both shapes (count-in, middle, last page of a 150-bar score, a 3-part score).
+
+### Still NOT tested
+- **A real iPhone.** Everything about Safari is reasoned from its documented behaviour and pretended in Chromium: that Safari 26's `AudioEncoder` takes `mp4a.40.2` at 48 kHz stereo, that its H.264 encoder takes 1080×1920, that its encoded chunks go into the muxer as Chromium's do, how fast it is, that "Save Video" appears in the share sheet for this file, that Photos and WhatsApp take it, the wake lock, and the whole real-time MediaRecorder way on iOS 16 to 18 (canvas capture, MP4 output, staying in sync).
+- **AAC made by a browser.** No encoder for it here: the AAC branch ran with real AAC only through the muxer (ffmpeg's frames), and in the browser with Opus standing in behind the AAC answers.
+- **Memory on a phone.** The figures above are from desktop Chromium. The design keeps memory flat however long the song is, but the level on an iPhone (and its limit) is not measured.
+- Real Android phones (whether their H.264 encoders take 1080×1920; the dialog falls back and says what to do), Firefox, desktop Safari.
+- How the louder mix sounds on phone speakers; nobody has listened, only levels were measured (trumpet alone: −23 dB mean, peaks −5 dB, where it was −30 dB mean; three parts with kit drums: −15 dB mean, peaks −1.4 dB, as the player mixes it).
+- Videos of scores with several hundred bars in the full-sheet view (150 bars tried) and very slow tempos (long real-time recordings).
+- Touch gestures on a device (long press in the 2-bar view), as before.

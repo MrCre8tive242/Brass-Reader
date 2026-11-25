@@ -19,11 +19,37 @@ Reading is automatic and can make mistakes. Always check the notes against your 
    - **BPM**: type a tempo (30 to 240), nudge it with − and + (hold to go faster), or tap the **Tap** button in time. If a metronome mark was printed on the page, it is used as the starting tempo.
    - **Click** turns on a metronome. **Count-in** gives you one bar of clicks before the music starts (before a pickup it counts up to the pickup).
    - **Play as** changes the instrument: the sound and the written notes. **Written for** is what the page was printed for; change it if the notes sound a step or more off.
-   - **A−** and **A+** change the size of the music. Turning the phone sideways gives the score the whole screen.
+   - **A−** and **A+** change the size of the music on the full sheet. Turning the phone sideways gives the score the whole screen.
+   - **Full sheet / 2 bars** (under the score) switches between the whole page and just the bar being played and the next one, drawn large with fingerings. See "2-bar view and video" below.
    - Bars the reader was unsure about are underlined in red with a small question mark. "Bars to check" lists them; tap a line to jump to that bar.
-6. **Take it with you.** **Download MIDI** and **Download MusicXML** save the part as shown (for your chosen instrument and tempo).
+6. **Take it with you.** **Download MIDI** and **Download MusicXML** save the part as shown (for your chosen instrument and tempo). **Download video** makes a play-along video of it.
 
 Everything you read is kept in **Your music** on that phone or computer, so you only scan a tune once. It is not shared between devices. To move a tune to another phone, download the MusicXML and open it there with **Open MusicXML**.
+
+## 2-bar view and video
+
+**Two bars at a time.** Under the score is a switch: **Full sheet / 2 bars**. "2 bars" shows only the bar being played and the bar that comes next, as large as the screen allows, with the fingering under every note. When the music reaches the next bar the view moves on with it; repeats, loops and bar jumps are followed. Hold the phone upright and the two bars sit one above the other; turn it sideways and they sit side by side. The choice is remembered for each tune. Tap a bar to jump to it, press and hold to loop it; drums, pitch-check colours and range warnings work as on the full sheet. **A−** and **A+** are not shown here, because the two bars always fill the screen.
+
+**Fingering style.** **Numbers** (1-3, 0 = open), **Valve dots** (three circles, a filled one is a pressed valve), **Both**, or **Off**. A trombone gets the slide position number, with a small picture of the slide. Choose it under the two bars or in **Practice**, **Fingerings**: it is one setting, used by the 2-bar view, the videos and the full sheet (tick "Show fingerings on the full sheet too"; there you can tap a fingering for another way to play the note). Rests have no fingering, a tied note has one only where it starts, and a dash means the note is outside the chart.
+
+**Download video.** The button is next to Download MIDI. Choose:
+
+- **View**: 2 bars or the full sheet (pages of lines that turn as the music gets there).
+- **Shape**: Portrait (1080×1920, for phones and WhatsApp status) or Landscape (1920×1080).
+- **Fingerings**: the same four styles.
+- **Count-in bar**: one bar of clicks, counted "1 2 3 4" on screen, before the music, so people can come in together.
+- **Include drums**: the groove chosen for this tune.
+
+Tempo, instrument, your part and the band mix are the ones on the score screen. Tap **Make video**; you can watch the pictures go by while it works, and **Cancel** stops it. The video shows the title, instrument, tempo, bar number ("Bar 12 of 48"), the bar being played, the moving line and the fingerings. The sound is the horns and band parts as you mixed them, plus the drums, turned up to a normal video level.
+
+**On an iPhone.**
+
+- iPhone with iOS 26 or newer: you get an **MP4** (H.264 picture, AAC sound) that is made faster than the tune plays. Keep the page open while it works.
+- Older iPhones (iOS 16 to 18) cannot make the sound track quickly, so the video is **recorded while it plays**: a three-minute tune takes three minutes. The dialog tells you before you start. Keep the page open and the screen on; if you leave, it stops and you start again.
+- When it is ready, tap **Save to Photos or share**. The iPhone's share sheet opens: **Save Video** puts it in Photos, or pick WhatsApp or AirDrop to send it. **Download file** puts it in the Files app instead. There is a small player to check it first.
+- A five-minute tune comes to very roughly 20 to 80 MB. The dialog shows the most it can be.
+
+On Android, Chrome also makes an MP4 where the phone's encoder takes the shape (if only one shape works as MP4 the dialog says which). Chrome on a Linux computer makes an MP4 with Opus sound, which browsers and Android play but some Apple apps do not. A browser with no H.264 encoder makes a WebM, which iPhone Photos cannot open; the dialog says so before you start.
 
 ## How to use at rehearsal: practice and drums
 
@@ -34,7 +60,7 @@ Open a score and tap **Practice** (top right). The tools are listed in the order
 - **Pitch check.** Tap **Start pitch check**, close the drawer, press Play and play your part. Notes turn green (in tune), yellow (a little sharp or flat, with an arrow) or red (wrong or missed). Your own part is silent while the check is on. Use headphones if you can: through the speaker the microphone also hears the backing. After a few notes the app works out how late your notes reach it (Bluetooth, speakers, your own timing) and allows for it; the drawer shows the figure, with **Forget it** if you change headphones. At the end you get a score and the bars with most misses: tap one to loop it.
 - **Record yourself.** Tap **Record my next play-through**, then Play. The take stops when the music stops. Listen to it alone or with the backing, save it as a file, keep up to ten per score.
 - **Band.** Add the other sheets of the tune (scan them into the same song), then mute, solo and balance the parts. **Mute my part** leaves the rest of the band playing.
-- **Fingerings** (slide positions for trombone) and **Range** (notes outside the comfortable range, with "drop these bars an octave").
+- **Fingerings** (slide positions for trombone): choose how they are written (numbers, valve dots, both, off) and whether the full sheet shows them too. **Range**: notes outside the comfortable range, with "drop these bars an octave".
 
 ### Record your drummers
 
@@ -121,6 +147,9 @@ Vercel cannot run Java, so the free Audiveris reader runs as a separate Docker s
 - **Drums:** a recording is cut into hits (spectral-flux onsets; flams and drummers who are not quite together count as one hit), the tempo is the finest grid the hits sit on grouped into beats, and each hit is re-triggered on the score's clock with short cross-fades (`lib/grooveAnalysis.ts`, `lib/drums.ts`). The starter kit is computed sample by sample (`lib/kitSynth.ts`).
 - **Pitch check:** the microphone is read every 20 ms with the McLeod method (`pitchy`) over six periods of the part's lowest note; a pitch an octave from the written note is checked against the harmonics actually in the sound; the delay between score and microphone is learned from note changes (`lib/pitch.ts`, `lib/pitchMic.ts`).
 
+- **2-bar view:** the two bars are cut out of the part as their own small score (with the clef, key and time in force there), drawn as large as the room allows, and the fingerings are placed under the note heads from where the drawing put them (`lib/barWindow.ts`, `lib/windowRender.ts`, `lib/windowOverlay.ts`).
+- **Video:** the sound is rendered ahead of time in 20-second pieces that join exactly (`lib/videoAudio.ts`); each frame is drawn on a canvas from the timeline (`lib/videoRender.ts`); the browser's own encoders make H.264 with AAC (or Opus) and a small muxer writes the MP4 block by block, so a long tune never sits in memory whole (`lib/videoMux.ts`, `lib/blobSink.ts`). Which way a browser goes is decided in `lib/videoSupport.ts`; where the encoders are missing the same frames and sound are recorded in real time with MediaRecorder.
+
 | Instrument | Clef | Written to concert | Sound |
 |---|---|---|---|
 | Bb Trumpet | treble | down a major 2nd | trumpet |
@@ -138,13 +167,16 @@ Vercel cannot run Java, so the free Audiveris reader runs as a separate Docker s
 - Baritone and trombone sound and read the same.
 - Scores live in one browser on one device. Clearing the browser's site data removes them.
 - Practice tools and drums have only been run in Chromium with a simulated microphone (generated tones, drum lines and a "phone microphone" low brass note). Real brass, real goatskin drums and cowbells, real rooms, Bluetooth headphones and iPhone Safari are still to be tried; nobody has listened to the synthesized kit yet.
+- The 2-bar view and the video have only been run in Chromium on a computer (phone-sized windows, and Safari's answers pretended). On a real iPhone the MP4 encoders, the share sheet's "Save Video", the real-time recording on older iOS and how long a five-minute tune takes are still to be tried. H.264 with Opus sound and WebM were played back and checked here; H.264 with AAC was checked by writing real H.264 and AAC streams with the app's own file writer and playing the result with ffmpeg.
+- In a video the full sheet is shown a page of lines at a time (it turns when the music gets there), not scrolling.
 - A recorded groove assumes 4-beat bars. In 3/4 it plays three beats of its bar and starts again.
 - The pitch check counts a note played a full octave out as wrong. Through a speaker it can be confused by the backing.
 - If the phone runs out of room the app says so and keeps what is on screen; a new take replaces the oldest takes of that score first.
 
 ## Tests
 
-- `npm test`: unit tests (reading format and MusicXML building, bar checks, transposition, timeline, MIDI, photo clean-up, player timing, request handling with the model replaced by a fake; loops, parts, fingerings, pitch judging on simulated phone-microphone brass, drum-line analysis on a simulated Junkanoo line with human timing, slicing and playback, the synthesized kit, storage failures).
+- `npm test`: unit tests (video: which file a browser gets, the file writer incl. a real H.264 + AAC file checked with ffmpeg when it is installed, the pieces the sound is made in, count-in and frame timing; the two-bar window and fingering styles; reading format and MusicXML building, bar checks, transposition, timeline, MIDI, photo clean-up, player timing, request handling with the model replaced by a fake; loops, parts, fingerings, pitch judging on simulated phone-microphone brass, drum-line analysis on a simulated Junkanoo line with human timing, slicing and playback, the synthesized kit, storage failures).
 - `npm run e2e`: Playwright against `next dev` with the preinstalled Chromium (`/opt/pw-browsers/chromium`; do not run `playwright install`). `/api/omr` is stubbed in these tests. Microphone tests use Chromium's fake device playing generated WAV files (`tests/e2e/audio.ts`).
+- The video tests (`tests/e2e/video.spec.ts`) really encode 1080p video and keep every core busy, so they are a Playwright project of their own that runs first, before the microphone tests. They check the files with `ffprobe`/`ffmpeg` when those are installed.
 - `npm run build`: production build.
 - Nothing in the suite calls the real model.
