@@ -2,6 +2,7 @@ import { get, set, del, keys, getMany } from 'idb-keyval';
 import type { InstrumentId } from './instruments';
 import type { LoopRange, Trainer } from './loop';
 import type { SongPart } from './song';
+import type { OctaveShift } from './range';
 import type { MixState } from './mixer';
 import { deleteTakesOf } from './takes';
 
@@ -30,6 +31,8 @@ export interface SavedScore {
   /** Mixer state per part id. */
   mix?: Record<string, MixState>;
   loop?: LoopRange | null;
+  /** Passages moved an octave to fit the instrument's range (applied on top of the reading; undo any time). */
+  octaveShifts?: OctaveShift[];
   trainer?: Trainer;
 }
 

@@ -18,6 +18,7 @@ import BandPanel from '@/components/BandPanel';
 import PitchPanel from '@/components/PitchPanel';
 import RecordPanel from '@/components/RecordPanel';
 import { fingeringFor } from '@/lib/fingering';
+import { addShift, applyShifts, describeRange, outOfRange, rangeLabel, type OctaveShift } from '@/lib/range';
 import { MicSession } from '@/lib/micSession';
 import { type NoteResult } from '@/lib/pitch';
 import { offsetInBar } from '@/lib/timeline';
@@ -34,6 +35,11 @@ const ZOOM_MIN = 0.6, ZOOM_MAX = 2.2, ZOOM_STEP = 0.15;
 
 function lsGet(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
 function lsSet(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* ignore */ } }
+
+/** Events of my part (all of them for a single part). */
+function myEvents(tl: { events: { part?: number; timeQ: number; durQ: number; midi: number; measure: number }[] }, myIdx: number) {
+  return tl.events.filter((e) => e.part === undefined || e.part === myIdx);
+}
 
 export default function ScorePage() {
   const params = useParams<{ id: string }>();
@@ -62,6 +68,8 @@ export default function ScorePage() {
   const [pass, setPass] = useState<{ n: number; bpm: number } | null>(null);
   const mic = useMemo(() => new MicSession(), []);
   const [fingerings, setFingerings] = useState(false);
+  const [rangeOn, setRangeOn] = useState(true);
+  const [shifts, setShifts] = useState<OctaveShift[]>([]);
   const [pitchOn, setPitchOn] = useState(false);
   const [pitchResults, setPitchResults] = useState<(NoteResult | undefined)[]>([]);
   const [checksOpen, setChecksOpen] = useState(false);
@@ -98,6 +106,7 @@ export default function ScorePage() {
         if (b >= 30 && b <= 240) setBpm(b);
         else if (printed && printed >= 30 && printed <= 240) setBpm(printed);
         setLoop(s.loop ?? null);
+        setShifts(s.octaveShifts ?? []);
         if (s.loop) setLoopDraft(s.loop);
         setTrainer(normalizeTrainer(s.trainer));
       }
@@ -117,7 +126,7 @@ export default function ScorePage() {
     if (!score || !repair || !myPart) return null;
     try {
       const concert = toConcert(repair.xml, source);
-      const mineXml = fromConcert(concert, target);
+      const mineXml = applyShifts(fromConcert(concert, target), shifts, target, myPart.id);
       const tlMine = buildTimeline(mineXml);
       const n = tlMine.measureCount;
       const warnings: string[] = [];
@@ -141,7 +150,7 @@ export default function ScorePage() {
     } catch (e) {
       return { xml: '', exportXml: '', tl: null, err: (e as Error).message, warnings: [] as string[] };
     }
-  }, [score, repair, myPart, myIdx, parts, source, target, full]);
+  }, [score, repair, myPart, myIdx, parts, source, target, full, shifts]);
 
   // player lifecycle
   useEffect(() => {
@@ -254,7 +263,27 @@ export default function ScorePage() {
     });
     return out;
   }, [tlNow, pitchOn, pitchResults, myNotes]);
-  const marks = pitchMarks;
+  // notes outside the comfortable range of the instrument being played (written pitch)
+  const rangeIssues = useMemo(() => (tlNow ? outOfRange(myEvents(tlNow, myIdx), target) : []), [tlNow, myIdx, target]);
+  const rangeMarks = useMemo<NoteMark[]>(() => {
+    if (!rangeOn || !tlNow || !rangeIssues.length) return [];
+    const ev = myEvents(tlNow, myIdx);
+    return rangeIssues.map((i) => ({ measure: ev[i.index].measure, offQ: offsetInBar(tlNow, ev[i.index].timeQ), kind: 'range' as const }));
+  }, [rangeOn, tlNow, rangeIssues, myIdx]);
+  // pitch-check colours win over the range colour on the same note
+  const marks = useMemo(() => [...rangeMarks, ...pitchMarks], [rangeMarks, pitchMarks]);
+  const loopNorm = normalizeLoop(loop, tlNow?.measureCount ?? 0);
+  const inLoop = loopNorm ? rangeIssues.filter((i) => { const m = myEvents(tlNow!, myIdx)[i.index].measure; return m >= loopNorm.from && m <= loopNorm.to; }) : [];
+  const moveLoop = (octaves: number) => {
+    if (!loopNorm || !myPart) return;
+    const next = addShift(shifts, { from: loopNorm.from, to: loopNorm.to, octaves, target, part: myPart.id });
+    setShifts(next);
+    void updateScore(id, { octaveShifts: next });
+  };
+  const clearShifts = () => { setShifts([]); void updateScore(id, { octaveShifts: [] }); };
+  const myShifts = shifts.filter((s) => s.target === target && s.part === myPart?.id);
+  useEffect(() => { setRangeOn(lsGet('brass-reader:range') !== '0'); }, []);
+  const changeRangeOn = (v: boolean) => { setRangeOn(v); lsSet('brass-reader:range', v ? '1' : '0'); };
   // valves / slide positions under my notes (looked up by what the instrument is playing)
   const fingerLabels = useMemo<NoteLabel[] | undefined>(() => {
     if (!fingerings || !tlNow) return undefined;
@@ -461,6 +490,31 @@ export default function ScorePage() {
             parts={parts} myIdx={myIdx} mix={mix} full={full} scoreId={id} warnings={derived?.warnings ?? []}
             onMix={onMix} onMy={(i) => onPart(String(i))} onFull={onFull} onInstrument={onPartInstrument}
           />
+        </Section>
+        <Section id="range" title={rangeIssues.length ? `Range (${rangeIssues.length} out of range)` : 'Range'}>
+          <label className="chk wide">
+            <input type="checkbox" checked={rangeOn} onChange={(e) => changeRangeOn(e.target.checked)} aria-label="Highlight notes out of range" /> Highlight notes out of range
+          </label>
+          <p className="small" data-testid="range-summary">
+            {rangeIssues.length
+              ? <>{describeRange(rangeIssues.map((i) => ({ ...i, measure: myEvents(tlNow!, myIdx)[i.index].measure })))}. Comfortable range for {INSTRUMENTS[target].name}: {rangeLabel(target)}.</>
+              : <>Every note is inside the comfortable range for {INSTRUMENTS[target].name} ({rangeLabel(target)}).</>}
+          </p>
+          {loopNorm
+            ? (
+              <div className="prow">
+                <button type="button" className="btn sm" onClick={() => moveLoop(-1)}>Drop bars {loopNorm.from}–{loopNorm.to} an octave (8vb)</button>
+                <button type="button" className="btn sm" onClick={() => moveLoop(1)}>Raise bars {loopNorm.from}–{loopNorm.to} an octave (8va)</button>
+                {inLoop.length > 0 && <span className="muted small" data-testid="range-offer">{inLoop.length} out-of-range note{inLoop.length > 1 ? 's' : ''} in the loop.</span>}
+              </div>
+            )
+            : <p className="muted small">Loop the bars you want to move (in Loop and speed trainer), then drop or raise them an octave here.</p>}
+          {myShifts.length > 0 && (
+            <div className="prow">
+              <span className="muted small" data-testid="range-moves">Moved: {myShifts.map((s) => `bars ${s.from}–${s.to} ${s.octaves > 0 ? '+' : ''}${s.octaves} oct`).join(', ')}</span>
+              <button type="button" className="btn sm ghost" onClick={clearShifts}>Undo octave moves</button>
+            </div>
+          )}
         </Section>
         <Section id="fingerings" title={INSTRUMENTS[target].id === 'trombone' ? 'Slide positions' : 'Fingerings'}>
           <label className="chk wide">

@@ -46,11 +46,33 @@ export function shiftOctaves(xml: string, from: number, to: number, octaves: num
   return serializeXml(doc);
 }
 
-/** A saved passage move: `octaves` applied to bars from..to while playing as `target`. */
-export interface OctaveShift { from: number; to: number; octaves: number; target: InstrumentId }
+/** A saved passage move: `octaves` applied to bars from..to of one part while playing as `target`. */
+export interface OctaveShift { from: number; to: number; octaves: number; target: InstrumentId; /** Part id; absent = the first part. */ part?: string }
 
-export function applyShifts(xml: string, shifts: OctaveShift[] | undefined, target: InstrumentId): string {
+export function applyShifts(xml: string, shifts: OctaveShift[] | undefined, target: InstrumentId, part?: string): string {
   let out = xml;
-  for (const s of shifts ?? []) if (s.target === target) out = shiftOctaves(out, s.from, s.to, s.octaves);
+  for (const s of shifts ?? []) if (s.target === target && (s.part ?? undefined) === (part ?? undefined)) out = shiftOctaves(out, s.from, s.to, s.octaves);
   return out;
+}
+
+/** Add a move to the saved list; the same bars moved again add up, and a move that cancels out disappears. */
+export function addShift(list: OctaveShift[] | undefined, s: OctaveShift): OctaveShift[] {
+  const out: OctaveShift[] = [];
+  let merged = false;
+  for (const x of list ?? []) {
+    if (!merged && x.from === s.from && x.to === s.to && x.target === s.target && x.part === s.part) {
+      merged = true;
+      if (x.octaves + s.octaves !== 0) out.push({ ...x, octaves: x.octaves + s.octaves });
+    } else out.push(x);
+  }
+  if (!merged) out.push(s);
+  return out;
+}
+
+const NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+export const noteName = (midi: number) => `${NAMES[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}`;
+/** "F#3 to C6": the comfortable written range of an instrument. */
+export function rangeLabel(inst: InstrumentId): string {
+  const [lo, hi] = INSTRUMENTS[inst].writtenRange;
+  return `${noteName(lo)} to ${noteName(hi)}`;
 }

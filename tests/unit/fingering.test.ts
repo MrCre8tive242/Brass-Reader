@@ -111,3 +111,28 @@ describe('range warnings', () => {
     expect(applyShifts(xml, undefined, 'trumpet')).toBe(xml);
   });
 });
+
+import { addShift, noteName, rangeLabel } from '@/lib/range';
+describe('saved octave moves', () => {
+  it('moving the same bars again adds up and cancels out', () => {
+    const a = addShift(undefined, { from: 2, to: 3, octaves: -1, target: 'trumpet', part: 'p0' });
+    const b = addShift(a, { from: 2, to: 3, octaves: -1, target: 'trumpet', part: 'p0' });
+    expect(b).toEqual([{ from: 2, to: 3, octaves: -2, target: 'trumpet', part: 'p0' }]);
+    expect(addShift(b, { from: 2, to: 3, octaves: 2, target: 'trumpet', part: 'p0' })).toEqual([]);
+    // other bars, instruments and parts stay separate
+    expect(addShift(a, { from: 4, to: 4, octaves: 1, target: 'trumpet', part: 'p0' })).toHaveLength(2);
+    expect(addShift(a, { from: 2, to: 3, octaves: -1, target: 'trombone', part: 'p0' })).toHaveLength(2);
+    expect(addShift(a, { from: 2, to: 3, octaves: -1, target: 'trumpet', part: 'p1' })).toHaveLength(2);
+  });
+  it('a move belongs to one part', () => {
+    const xml = notationToMusicXml(parseNotation('time: 4/4\n1: C6:w')).xml;
+    const shifts = [{ from: 1, to: 1, octaves: -1, target: 'trumpet' as const, part: 'p1' }];
+    expect(applyShifts(xml, shifts, 'trumpet', 'p0')).toBe(xml);
+    expect(applyShifts(xml, shifts, 'trumpet', 'p1')).not.toBe(xml);
+  });
+  it('names the range', () => {
+    expect(noteName(54)).toBe('F#3'.replace('F#', 'F#'));
+    expect(rangeLabel('trumpet')).toBe('F#3 to C6');
+    expect(rangeLabel('sousaphone')).toBe('E1 to F3');
+  });
+});
