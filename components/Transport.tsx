@@ -9,6 +9,8 @@ interface Props {
   /** Printed bar label ("Pickup" or a number) and the last printed bar number; default to measure/measureCount. */
   barLabel?: string;
   barTotal?: number;
+  /** "Pass 3 · 85 → 120 BPM" while a practice loop is set. */
+  passLabel?: string;
   bpm: number;
   metronome: boolean;
   countIn: boolean;
@@ -75,6 +77,7 @@ export default function Transport(p: Props) {
   const pickup = p.barLabel === 'Pickup';
   return (
     <div className="transport" role="group" aria-label="Playback controls" ref={rootRef}>
+      {p.passLabel && <p className="passline" data-testid="pass-label" role="status">{p.passLabel}</p>}
       <div className="row main">
         <div className="barcount" data-testid="bar-counter" aria-live="off">
           {pickup ? 'Pickup' : `Bar ${p.barLabel ?? p.measure} / ${p.barTotal ?? p.measureCount}`}

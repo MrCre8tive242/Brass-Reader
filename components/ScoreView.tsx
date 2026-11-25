@@ -12,6 +12,10 @@ interface Props {
   zoom?: number;
   /** Written bars (1-based) to mark as "check this bar". */
   flagged?: number[];
+  /** Bars (written, 1-based, inclusive) shaded as the practice loop. */
+  loop?: { from: number; to: number } | null;
+  /** The player picked bars by long-press or drag. */
+  onLoopSelect?: (from: number, to: number) => void;
   onSeekMeasure: (measure: number) => void;
   onReady?: (info: { measureCount: number }) => void;
   onError?: (msg: string) => void;
@@ -26,7 +30,7 @@ type Osmd = any;
 
 const UNIT = 10; // OSMD units are 10px at zoom 1
 
-const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, zoom = 1, flagged, onSeekMeasure, onReady, onError }, ref) {
+const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, zoom = 1, flagged, loop, onLoopSelect, onSeekMeasure, onReady, onError }, ref) {
   const wrap = useRef<HTMLDivElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const hl = useRef<HTMLDivElement>(null);
@@ -45,6 +49,12 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
   const rerender = useRef<((scroll: boolean) => void) | null>(null);
   const seekRef = useRef(onSeekMeasure);
   seekRef.current = onSeekMeasure;
+  const selectRef = useRef(onLoopSelect);
+  selectRef.current = onLoopSelect;
+  const loopRef = useRef(loop);
+  loopRef.current = loop;
+  const gesture = useRef<{ bar: number; x: number; y: number; dragging: boolean; timer?: ReturnType<typeof setTimeout>; mouse: boolean } | null>(null);
+  const swallowClick = useRef(false);
 
   function collect(osmd: Osmd) {
     const c = osmd.cursor;
@@ -249,12 +259,13 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
     return () => clearTimeout(t);
   }, [zoom]);
 
-  function onClick(e: React.MouseEvent) {
+  /** Written bar (1-based) nearest to a screen point, or 0. */
+  function barAt(clientX: number, clientY: number): number {
     const h = host.current;
-    if (!h || !boxes.current.length) return;
+    if (!h || !boxes.current.length) return 0;
     const rect = h.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
     let best = -1, bestD = Infinity;
     boxes.current.forEach((b, i) => {
       if (!b.w) return;
@@ -263,7 +274,53 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
       const d = dx * dx + dy * dy * 4;
       if (d < bestD) { bestD = d; best = i; }
     });
-    if (best >= 0) seekRef.current(best + 1);
+    return best + 1;
+  }
+
+  function onClick(e: React.MouseEvent) {
+    if (swallowClick.current) { swallowClick.current = false; return; }
+    const bar = barAt(e.clientX, e.clientY);
+    if (bar > 0) seekRef.current(bar);
+  }
+
+  // pick practice-loop bars: press and hold a bar (touch), or press and drag across bars (mouse)
+  function onPointerDown(e: React.PointerEvent) {
+    if (!selectRef.current || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    const bar = barAt(e.clientX, e.clientY);
+    if (!bar) return;
+    const g = { bar, x: e.clientX, y: e.clientY, dragging: false, mouse: e.pointerType === 'mouse' } as NonNullable<typeof gesture.current>;
+    g.timer = setTimeout(() => {
+      if (gesture.current !== g || g.dragging) return;
+      g.dragging = true; // a long press: swallow the click that follows
+      swallowClick.current = true;
+      const l = loopRef.current;
+      // a second long press beyond the loop stretches it, inside it starts a new one
+      if (l && bar < l.from) selectRef.current?.(bar, l.to);
+      else if (l && bar > l.to) selectRef.current?.(l.from, bar);
+      else selectRef.current?.(bar, bar);
+    }, 500);
+    gesture.current = g;
+  }
+  function onPointerMove(e: React.PointerEvent) {
+    const g = gesture.current;
+    if (!g) return;
+    const moved = Math.hypot(e.clientX - g.x, e.clientY - g.y);
+    if (!g.mouse) { if (moved > 10 && !g.dragging) { clearTimeout(g.timer); gesture.current = null; } return; }
+    if (moved < 6 && !g.dragging) return;
+    const bar = barAt(e.clientX, e.clientY);
+    if (!bar) return;
+    if (!g.dragging && bar === g.bar) return;
+    clearTimeout(g.timer);
+    g.dragging = true;
+    swallowClick.current = true;
+    selectRef.current?.(Math.min(g.bar, bar), Math.max(g.bar, bar));
+  }
+  function endGesture() {
+    const g = gesture.current;
+    if (g) clearTimeout(g.timer);
+    gesture.current = null;
+    // the click (if any) comes right after pointerup; make sure a stale flag cannot swallow a later tap
+    if (swallowClick.current) setTimeout(() => { swallowClick.current = false; }, 60);
   }
 
   useEffect(() => {
@@ -274,8 +331,11 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
   return (
     <div className="score" ref={wrap} data-testid="score" data-busy={busy ? '1' : '0'}>
       {busy && <div className="score-busy"><span className="spinner" aria-hidden /> Drawing score…</div>}
-      <div className="score-inner" onClick={onClick}>
+      <div className="score-inner" onClick={onClick} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endGesture} onPointerCancel={endGesture} onPointerLeave={endGesture} onContextMenu={(e) => { if (gesture.current?.dragging || swallowClick.current) e.preventDefault(); }}>
         <div className="score-host" ref={host} />
+        {layout > 0 && loop && boxes.current.slice(loop.from - 1, loop.to).map((b, i) => (
+          b && b.w > 0 ? <div key={`loop${loop.from + i}`} className="loop-mark" data-testid="loop-mark" style={{ transform: `translate(${b.x}px, ${b.y}px)`, width: b.w, height: b.h }} /> : null
+        ))}
         <div className="bar-hl" ref={hl} data-testid="bar-highlight" />
         {layout > 0 && (flagged ?? []).map((m) => {
           const b = boxes.current[m - 1];

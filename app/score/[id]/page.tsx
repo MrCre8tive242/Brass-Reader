@@ -15,6 +15,10 @@ import { detectSourceInstrument, summariseScore, extractPart } from '@/lib/music
 import { AlertIcon, BackIcon } from '@/components/Icons';
 import { analyseAndRepair } from '@/lib/repair';
 import { Player } from '@/lib/player';
+import PracticeSheet, { Section } from '@/components/PracticeSheet';
+import LoopPanel from '@/components/LoopPanel';
+import { LoopIcon } from '@/components/Icons';
+import { DEFAULT_TRAINER, loopQ, normalizeLoop, normalizeTrainer, passLabel, type LoopRange, type Trainer } from '@/lib/loop';
 
 const ZOOM_MIN = 0.6, ZOOM_MAX = 2.2, ZOOM_STEP = 0.15;
 
@@ -39,6 +43,11 @@ export default function ScorePage() {
   const [blocked, setBlocked] = useState(false);
   const [part, setPart] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [practiceOpen, setPracticeOpen] = useState(false);
+  const [loop, setLoop] = useState<LoopRange | null>(null);
+  const [loopDraft, setLoopDraft] = useState<LoopRange>({ from: 1, to: 2 });
+  const [trainer, setTrainer] = useState<Trainer>(DEFAULT_TRAINER);
+  const [pass, setPass] = useState<{ n: number; bpm: number } | null>(null);
   const [checksOpen, setChecksOpen] = useState(false);
   const player = useRef<Player | null>(null);
   const view = useRef<ScoreViewHandle>(null);
@@ -67,6 +76,9 @@ export default function ScorePage() {
         if (b >= 30 && b <= 240) setBpm(b);
         else if (printed && printed >= 30 && printed <= 240) setBpm(printed);
         setPart(typeof s.partIndex === 'number' ? s.partIndex : null);
+        setLoop(s.loop ?? null);
+        if (s.loop) setLoopDraft(s.loop);
+        setTrainer(normalizeTrainer(s.trainer));
       }
     }).catch(() => alive && setScore(null));
     return () => { alive = false; };
@@ -100,6 +112,8 @@ export default function ScorePage() {
     const p = new Player(ctx);
     p.onState = (v) => { setPlaying(v); if (v) setBlocked(false); };
     p.onBlocked = () => setBlocked(true);
+    // a loop pass became audible: show it, and follow the speed trainer's tempo (the player already runs at it)
+    p.onPass = (n, b) => { setPass({ n, bpm: b }); setBpm(b); };
     p.onPosition = (q, m, off) => {
       view.current?.setPosition(q, m, off);
       if (m !== measureRef.current) { measureRef.current = m; setMeasure(m); }
@@ -146,6 +160,30 @@ export default function ScorePage() {
   }, [derived]);
 
   useEffect(() => { player.current?.setBpm(bpm); }, [bpm]);
+  // practice loop + trainer reach the player (after the timeline, so the bars map onto it)
+  useEffect(() => {
+    const p = player.current;
+    const tl = derived?.tl;
+    if (!p) return;
+    const n = tl ? normalizeLoop(loop, tl.measureCount) : null;
+    p.setLoop(tl && n ? loopQ(tl, n) : null);
+    p.setTrainer(n ? trainer : null);
+    if (!n) setPass(null);
+  }, [derived, loop, trainer]);
+  const changeLoop = useCallback((r: LoopRange | null) => {
+    setLoop(r);
+    if (r) setLoopDraft(r);
+    setPass(null);
+    void updateScore(id, { loop: r });
+  }, [id]);
+  const changeTrainer = useCallback((t: Trainer) => { setTrainer(t); void updateScore(id, { trainer: t }); }, [id]);
+  // picking bars on the score: loop them and park the cursor at the start
+  const pickLoop = useCallback((from: number, to: number) => {
+    const n = normalizeLoop({ from, to }, measureCountRef.current);
+    if (!n) return;
+    changeLoop(n);
+    if (!player.current?.isPlaying) player.current?.seek(n.from);
+  }, [changeLoop]);
   // persist only on user changes (writing from an effect would overwrite the stored value with the default before it is read)
   const changeBpm = useCallback((n: number) => { setBpm(n); lsSet(`bpm:${id}`, String(n)); }, [id]);
   useEffect(() => { if (player.current) player.current.metronome = metronome; }, [metronome]);
@@ -157,6 +195,8 @@ export default function ScorePage() {
 
   const tlNow = derived?.tl ?? null;
   const measureCount = tlNow?.measureCount ?? 0;
+  const measureCountRef = useRef(0);
+  measureCountRef.current = measureCount;
 
   const playPause = useCallback(() => {
     const p = player.current;
@@ -241,6 +281,7 @@ export default function ScorePage() {
       <header className="topbar">
         <Link href="/" className="back" aria-label="Back to library"><BackIcon /></Link>
         <h1 className="title">{score.title}</h1>
+        <button type="button" className="practice-btn" aria-label="Practice" aria-expanded={practiceOpen} onClick={() => setPracticeOpen((o) => !o)}><LoopIcon size={24} /></button>
         <div className="zoom" role="group" aria-label="Score size">
           <button type="button" onClick={() => changeZoom(-ZOOM_STEP)} aria-label="Zoom out" disabled={zoom <= ZOOM_MIN}>A−</button>
           <button type="button" onClick={() => changeZoom(ZOOM_STEP)} aria-label="Zoom in" disabled={zoom >= ZOOM_MAX}>A+</button>
@@ -295,6 +336,8 @@ export default function ScorePage() {
             xml={derived.xml}
             zoom={zoom}
             flagged={flagged}
+            loop={normalizeLoop(loop, measureCount)}
+            onLoopSelect={pickLoop}
             onSeekMeasure={(m) => player.current?.seek(m)}
             onReady={() => setScoreReady(true)}
             onError={setError}
@@ -307,12 +350,18 @@ export default function ScorePage() {
           getXml={() => derived!.xml}
         />
       </main>
+      <PracticeSheet open={practiceOpen} onClose={() => setPracticeOpen(false)}>
+        <Section id="loop" title="Loop and speed trainer" open>
+          <LoopPanel measureCount={measureCount} loop={normalizeLoop(loop, measureCount)} draft={loopDraft} trainer={trainer} onDraft={setLoopDraft} onLoop={changeLoop} onTrainer={changeTrainer} />
+        </Section>
+      </PracticeSheet>
       <Transport
         playing={playing}
         measure={measure}
         measureCount={measureCount}
         barLabel={tlNow?.barLabels[measure - 1]}
         barTotal={tlNow?.barTotal}
+        passLabel={loop && pass ? passLabel(pass.n, pass.bpm, trainer) : undefined}
         bpm={bpm}
         metronome={metronome}
         countIn={countIn}

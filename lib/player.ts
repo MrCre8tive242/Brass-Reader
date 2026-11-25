@@ -1,6 +1,7 @@
 import { INSTRUMENTS, type InstrumentId } from './instruments';
 import { measureAt, slotAt, firstQ, type Timeline } from './timeline';
 import { unlockAudio, releaseAudio } from './audioUnlock';
+import { trainerBpm, type Trainer } from './loop';
 
 export interface Click { timeQ: number; accent: boolean }
 
@@ -126,6 +127,8 @@ export class Player {
   onBlocked: () => void = () => {};
   /** Which sound engine is active after load(). */
   engine: 'soundfont' | 'synth' | 'none' = 'none';
+  /** A loop pass became audible: pass number (1-based) and the tempo it plays at. */
+  onPass: (pass: number, bpm: number) => void = () => {};
 
   private voice: Voice | null = null;
   private tl: Timeline | null = null;
@@ -136,6 +139,15 @@ export class Player {
   private anchorQ = 0; // quarters at anchorTime
   private anchorTime = 0; // ctx time when q == anchorQ
   private startQ = 0; // first q that sounds notes (after count-in)
+  private minQ = 0; // lowest position the clock may report (start of the current pass)
+  private passStartQ = 0; // where the current pass began (held notes are re-attacked here)
+  private loop: { startQ: number; endQ: number } | null = null;
+  private loopActive = false;
+  private trainer: Trainer | null = null;
+  private pass = 1;
+  private prevEndQ = 0; // end of the loop the audio is still finishing while the next pass is already scheduled
+  private prevBpm = 100;
+  private pendingPass: { at: number; pass: number; bpm: number }[] = [];
   private nextEvent = 0;
   private nextClick = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -228,8 +240,13 @@ export class Player {
   /** Current position in quarter notes, derived from the audio clock while playing. */
   currentQ(): number {
     if (!this.playing) return this.posQ;
-    const q = this.anchorQ + ((this.ctx.currentTime - this.anchorTime) * this.bpm) / 60;
-    return Math.max(this.startQ, Math.min(q, this.tl?.totalQ ?? q));
+    const t = this.ctx.currentTime;
+    // the next loop pass is scheduled a little ahead of the audio: until it begins we are still in the last bar of the previous pass
+    if (this.loopActive && this.pendingPass.length && t < this.anchorTime) {
+      return Math.max(this.minQ, this.prevEndQ - ((this.anchorTime - t) * this.prevBpm) / 60);
+    }
+    const q = this.anchorQ + ((t - this.anchorTime) * this.bpm) / 60;
+    return Math.max(this.minQ, Math.min(q, this.tl?.totalQ ?? q));
   }
 
   /**
@@ -243,18 +260,35 @@ export class Player {
     if (this.ctx.state !== 'running') { this.onBlocked(); return false; }
     let q = fromMeasure ? firstQ(this.tl, fromMeasure) : this.posQ;
     if (q >= this.tl.totalQ - 1e-6) q = 0;
-    this.restartFrom(q, this.countIn);
+    // with a loop set, play always begins inside it
+    if (this.loop && (q < this.loop.startQ - 1e-6 || q >= this.loop.endQ - 1e-6)) q = this.loop.startQ;
+    this.restartFrom(q, this.countIn, 0.06, true);
     return true;
   }
 
   pause() {
     if (!this.playing) return;
-    this.posQ = Math.max(this.startQ, this.currentQ());
+    this.posQ = Math.max(this.minQ, this.currentQ());
     this.stopSound();
     this.setPlaying(false);
     releaseAudio();
     this.emit(this.posQ);
   }
+
+  /** Repeat the quarter-note range seamlessly (null = no loop). The count-in only happens before the first pass. */
+  setLoop(range: { startQ: number; endQ: number } | null) {
+    this.loop = range && range.endQ > range.startQ ? { ...range } : null;
+    if (!this.playing) return;
+    const q = this.currentQ();
+    this.loopActive = !!this.loop && q >= this.loop.startQ - 1e-6 && q < this.loop.endQ - 1e-6;
+  }
+
+  /** Speed trainer: with a loop running, the tempo steps up after the set number of passes. */
+  setTrainer(t: Trainer | null) {
+    this.trainer = t && t.enabled ? { ...t } : null;
+  }
+
+  get loopPass() { return this.pass; }
 
   /** Jump to the first time written bar `measure` is played. */
   seek(measure: number) {
@@ -311,14 +345,22 @@ export class Player {
     this.voice?.stop();
   }
 
-  private restartFrom(q: number, withCountIn = false, lead = 0.06) {
+  private restartFrom(q: number, withCountIn = false, lead = 0.06, newRun = false) {
     if (!this.tl) return;
     this.stopSound();
+    this.loopActive = !!this.loop && q >= this.loop.startQ - 1e-6 && q < this.loop.endQ - 1e-6;
+    this.pendingPass = [];
+    if (newRun) {
+      this.pass = 1;
+      if (this.loopActive && this.trainer) this.bpm = trainerBpm(this.trainer, 1);
+    }
     const now = this.ctx.currentTime;
     const m = measureAt(this.tl, q);
     this.countClicks = withCountIn ? countInClicks(this.tl, m) : [];
     const countQ = this.countClicks.length ? -this.countClicks[0].offsetQ : 0;
     this.startQ = q;
+    this.minQ = q;
+    this.passStartQ = q;
     this.anchorQ = q - countQ;
     this.anchorTime = now + lead;
     this.posQ = q;
@@ -336,14 +378,20 @@ export class Player {
     this.countInPending = countQ > 0;
     this.countInNext = 0;
     this.setPlaying(true);
+    if (newRun && this.loopActive) this.onPass(this.pass, this.bpm);
     this.tick();
     this.timer = setInterval(() => this.tick(), TICK_MS);
     const frame = () => {
       if (!this.playing) return;
       const cq = this.currentQ();
+      // a new loop pass has started to be heard: tell the screen (pass number, new tempo)
+      while (this.pendingPass.length && this.ctx.currentTime >= this.pendingPass[0].at) {
+        const pp = this.pendingPass.shift()!;
+        this.onPass(pp.pass, pp.bpm);
+      }
       // show what is being HEARD now, not what was just scheduled
-      this.emit(Math.max(this.startQ, cq - (this.outputDelay() * this.bpm) / 60));
-      if (this.tl && cq >= this.tl.totalQ - 1e-6 && this.nextEvent >= this.tl.events.length) {
+      this.emit(Math.max(this.minQ, cq - (this.outputDelay() * this.bpm) / 60));
+      if (!this.loopActive && this.tl && cq >= this.tl.totalQ - 1e-6 && this.nextEvent >= this.tl.events.length) {
         this.finish();
         return;
       }
@@ -373,7 +421,6 @@ export class Player {
   private tick() {
     if (!this.tl || !this.playing) return;
     const horizon = this.ctx.currentTime + LOOKAHEAD_S;
-    const spq = 60 / this.bpm;
     // count-in clicks (always audible) before the start position
     if (this.countInPending) {
       while (this.countInNext < this.countClicks.length) {
@@ -385,23 +432,39 @@ export class Player {
       }
       this.countInPending = false;
     }
-    if (this.held.length && this.timeOf(this.startQ) <= horizon) {
-      const when = Math.max(this.timeOf(this.startQ), this.ctx.currentTime);
-      for (const h of this.held) this.voice?.start({ note: h.midi, time: when, duration: Math.max(0.05, h.remQ * spq * 0.97), velocity: 0.8 });
+    // one pass of scheduling; with a loop, a pass ends at the loop end and the next one is anchored exactly there (no gap)
+    for (let guard = 0; guard < 8; guard++) {
+      this.scheduleUntil(horizon);
+      if (!(this.loopActive && this.loop) || this.timeOf(this.loop.endQ) > horizon) break;
+      this.wrapLoop();
+    }
+  }
+
+  private scheduleUntil(horizon: number) {
+    if (!this.tl) return;
+    const spq = 60 / this.bpm;
+    const endQ = this.loopActive && this.loop ? this.loop.endQ : Infinity;
+    if (this.held.length && this.timeOf(this.passStartQ) <= horizon) {
+      const when = Math.max(this.timeOf(this.passStartQ), this.ctx.currentTime);
+      for (const h of this.held) this.play1(h.midi, when, Math.max(0.05, Math.min(h.remQ, endQ - this.passStartQ) * spq * 0.97), 0);
       this.held = [];
     }
     const ev = this.tl.events;
     while (this.nextEvent < ev.length) {
       const e = ev[this.nextEvent];
+      if (e.timeQ >= endQ - 1e-6) break;
       const t = this.timeOf(e.timeQ);
       if (t > horizon) break;
       const when = Math.max(t, this.ctx.currentTime);
-      this.voice?.start({ note: e.midi, time: when, duration: Math.max(0.05, e.durQ * spq * 0.97), velocity: 0.8 });
+      // a note that runs past the loop end is cut at the end
+      const durQ = Math.min(e.durQ, endQ - e.timeQ);
+      this.play1(e.midi, when, Math.max(0.05, durQ * spq * 0.97), e.part ?? 0);
       this.nextEvent++;
     }
     if (this.metronome) {
       while (this.nextClick < this.clicks.length) {
         const c = this.clicks[this.nextClick];
+        if (c.timeQ >= endQ - 1e-6) break;
         const t = this.timeOf(c.timeQ);
         if (t > horizon) break;
         this.click(Math.max(t, this.ctx.currentTime), c.accent);
@@ -409,8 +472,41 @@ export class Player {
       }
     } else {
       // keep the pointer moving so enabling the metronome mid-play doesn't burst old clicks
-      while (this.nextClick < this.clicks.length && this.timeOf(this.clicks[this.nextClick].timeQ) < this.ctx.currentTime) this.nextClick++;
+      while (this.nextClick < this.clicks.length && this.clicks[this.nextClick].timeQ < endQ - 1e-6 && this.timeOf(this.clicks[this.nextClick].timeQ) < this.ctx.currentTime) this.nextClick++;
     }
+  }
+
+  /** The loop end has been scheduled: begin the next pass exactly at the end time, possibly at a faster tempo. */
+  private wrapLoop() {
+    if (!this.tl || !this.loop) return;
+    const tEnd = this.timeOf(this.loop.endQ);
+    this.prevEndQ = this.loop.endQ;
+    this.prevBpm = this.bpm;
+    this.pass++;
+    if (this.trainer) {
+      const next = trainerBpm(this.trainer, this.pass);
+      if (next !== trainerBpm(this.trainer, this.pass - 1)) this.bpm = next;
+    }
+    const sq = this.loop.startQ;
+    this.anchorQ = sq;
+    this.anchorTime = tEnd;
+    this.minQ = sq;
+    this.passStartQ = sq;
+    this.nextEvent = this.tl.events.findIndex((e) => e.timeQ >= sq - 1e-6);
+    if (this.nextEvent < 0) this.nextEvent = this.tl.events.length;
+    this.nextClick = this.clicks.findIndex((c) => c.timeQ >= sq - 1e-6);
+    if (this.nextClick < 0) this.nextClick = this.clicks.length;
+    this.held = [];
+    for (let i = 0; i < this.nextEvent; i++) {
+      const e = this.tl.events[i];
+      const remQ = e.timeQ + e.durQ - sq;
+      if (remQ > 0.02) this.held.push({ midi: e.midi, remQ });
+    }
+    this.pendingPass.push({ at: tEnd, pass: this.pass, bpm: this.bpm });
+  }
+
+  private play1(note: number, time: number, duration: number, part: number) {
+    this.voice?.start({ note, time, duration, velocity: 0.8 });
   }
 
   private click(time: number, accent: boolean) {

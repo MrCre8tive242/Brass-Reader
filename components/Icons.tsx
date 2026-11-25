@@ -26,3 +26,5 @@ export const BrandMark = ({ size = 36, className }: P) => (
     <rect x="18" y="38" width="4" height="10" rx="2" fill="var(--accent-ink)" /><rect x="25" y="38" width="4" height="10" rx="2" fill="var(--accent-ink)" />
   </svg>
 );
+export const LoopIcon = ({ size, className }: P) => <svg {...base(size)} className={className}><path d="M17 3l3 3-3 3" {...stroke} /><path d="M4 11V9a3 3 0 0 1 3-3h13" {...stroke} /><path d="M7 21l-3-3 3-3" {...stroke} /><path d="M20 13v2a3 3 0 0 1-3 3H4" {...stroke} /></svg>;
+export const MicIcon = ({ size, className }: P) => <svg {...base(size)} className={className}><rect x="9" y="3" width="6" height="11" rx="3" {...stroke} /><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" {...stroke} /></svg>;

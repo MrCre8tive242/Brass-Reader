@@ -10,6 +10,8 @@ export interface TimelineEvent {
   midi: number;
   /** 1-based WRITTEN measure index (for the cursor, bar highlight and bar counter). `timeQ` is in play order. */
   measure: number;
+  /** Which part of an ensemble this note belongs to (0 = the player's own part). Absent = 0. */
+  part?: number;
 }
 
 export interface Timeline {

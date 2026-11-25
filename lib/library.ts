@@ -1,5 +1,6 @@
 import { get, set, del, keys, getMany } from 'idb-keyval';
 import type { InstrumentId } from './instruments';
+import type { LoopRange, Trainer } from './loop';
 
 export interface SavedScore {
   id: string;
@@ -15,6 +16,9 @@ export interface SavedScore {
   flags?: { bar: string; text: string }[];
   /** Which part of a multi-part score to show and play (0-based); undefined or null = all parts together. */
   partIndex?: number | null;
+  /** Practice loop (written bars) and speed trainer settings. */
+  loop?: LoopRange | null;
+  trainer?: Trainer;
 }
 
 const PREFIX = 'score:';
