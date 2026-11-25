@@ -4,7 +4,7 @@ import type { Timeline } from './timeline';
 const PPQ = 480;
 
 /** Standard MIDI file for a timeline. Pitches are concert (sounding). */
-export function toMidi(tl: Timeline, bpm: number, program: number, name = 'Brass Reader'): Uint8Array {
+export function toMidi(tl: Timeline, bpm: number, program: number, name = 'Brass Reader', tracks?: { name: string; program: number }[]): Uint8Array {
   const midi = new Midi();
   midi.header.setTempo(bpm);
   midi.header.name = name;
@@ -21,10 +21,16 @@ export function toMidi(tl: Timeline, bpm: number, program: number, name = 'Brass
     midi.header.timeSignatures.push({ ticks: Math.round(startQ * PPQ), timeSignature: [sig.beats, sig.beatType] });
   });
   midi.header.update();
-  const track = midi.addTrack();
-  track.name = name;
-  track.instrument.number = program;
+  // one track per part for an ensemble; a single part keeps its single track
+  const list = tracks && tracks.length > 1 ? tracks : [{ name, program }];
+  const made = list.map((t) => {
+    const track = midi.addTrack();
+    track.name = t.name;
+    track.instrument.number = t.program;
+    return track;
+  });
   for (const e of tl.events) {
+    const track = made[made.length > 1 ? Math.min(made.length - 1, e.part ?? 0) : 0];
     track.addNote({
       midi: e.midi,
       ticks: Math.round(e.timeQ * PPQ),

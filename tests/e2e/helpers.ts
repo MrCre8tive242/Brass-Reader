@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 export const fixture = (name: string) => fs.readFileSync(path.join(__dirname, '../fixtures', name), 'utf8');
 
@@ -35,3 +35,20 @@ export function collectConsoleErrors(page: Page): string[] {
   });
   return errs;
 }
+
+export async function openScore(page: Page, file = 'scale.musicxml', id = 'p1') {
+  await seedScore(page, id, 'Practice Scale', fixture(file));
+  await page.goto(`/score/${id}`);
+  await expect(page.getByTestId('score')).toHaveAttribute('data-busy', '0', { timeout: 30_000 });
+  await expect(page.locator('.score-host svg').first()).toBeVisible();
+}
+/** Open the practice drawer (and one of its sections, if named). */
+export const openPractice = async (page: Page, section?: string) => {
+  if (!(await page.getByTestId('practice-sheet').isVisible())) await page.getByRole('button', { name: 'Practice' }).click();
+  await expect(page.getByTestId('practice-sheet')).toBeVisible();
+  if (section) {
+    const sec = page.getByTestId(`sec-${section}`);
+    if ((await sec.getAttribute('open')) === null) await sec.locator('summary').click();
+    await expect(sec).toHaveAttribute('open', '');
+  }
+};

@@ -18,6 +18,7 @@
     "next": "16.4.6",
     "opensheetmusicdisplay": "3.0.0",
     "pdfjs-dist": "6.5.438",
+    "pitchy": "4.1.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "smplr": "1.2.0"

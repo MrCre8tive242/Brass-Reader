@@ -1,5 +1,13 @@
 'use client';
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { noteKey } from '@/lib/timeline';
+
+/** Colour a note on the drawn score. `range` marks a note outside the instrument's range. */
+export interface NoteMark { measure: number; offQ: number; kind: 'green' | 'yellow' | 'red' | 'range'; arrow?: 'up' | 'down' }
+/** Small text under a note (a fingering); tapping it steps through `alts`. */
+export interface NoteLabel { measure: number; offQ: number; text: string; alts?: string[] }
+
+const MARK_COLOR: Record<NoteMark['kind'], string> = { green: '#1c9c47', yellow: '#d99a00', red: '#d62d20', range: '#8a2be2' };
 
 export interface ScoreViewHandle {
   /** Move the cursor + bar highlight to quarter-note position q. */
@@ -12,6 +20,9 @@ interface Props {
   zoom?: number;
   /** Written bars (1-based) to mark as "check this bar". */
   flagged?: number[];
+  /** Notes to colour (pitch check, range warnings) and fingerings to write under notes of my part. */
+  marks?: NoteMark[];
+  labels?: NoteLabel[];
   /** Bars (written, 1-based, inclusive) shaded as the practice loop. */
   loop?: { from: number; to: number } | null;
   /** The player picked bars by long-press or drag. */
@@ -30,7 +41,7 @@ type Osmd = any;
 
 const UNIT = 10; // OSMD units are 10px at zoom 1
 
-const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, zoom = 1, flagged, loop, onLoopSelect, onSeekMeasure, onReady, onError }, ref) {
+const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, zoom = 1, flagged, marks, labels, loop, onLoopSelect, onSeekMeasure, onReady, onError }, ref) {
   const wrap = useRef<HTMLDivElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const hl = useRef<HTMLDivElement>(null);
@@ -55,6 +66,8 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
   loopRef.current = loop;
   const gesture = useRef<{ bar: number; x: number; y: number; dragging: boolean; timer?: ReturnType<typeof setTimeout>; mouse: boolean } | null>(null);
   const swallowClick = useRef(false);
+  const noteEls = useRef<Map<string, SVGElement[]> | null>(null);
+  const painted = useRef<{ els: SVGElement[]; added: Element[] }>({ els: [], added: [] });
 
   function collect(osmd: Osmd) {
     const c = osmd.cursor;
@@ -195,6 +208,8 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
       osmd.render();
       measureBoxes(osmd);
       collect(osmd);
+      noteEls.current = null;
+      painted.current = { els: [], added: [] }; // the redraw replaced every element
       lastW = w;
       const { q, measure, off } = lastPos.current;
       cur.current = 0;
@@ -277,8 +292,111 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
     return best + 1;
   }
 
+  /** Drawn note heads of my part by note key (built on first use after every redraw: walking every step is not free). */
+  function noteMap(): Map<string, SVGElement[]> | null {
+    if (noteEls.current) return noteEls.current;
+    const osmd = osmdRef.current;
+    if (!osmd || !stepCount.current) return null;
+    const c = osmd.cursor;
+    const map = new Map<string, SVGElement[]>();
+    const mine = osmd.Sheet?.Instruments?.[0];
+    const seen = new Set<string>();
+    let guard = 0;
+    c.reset();
+    while (!c.iterator.EndReached && guard++ < 200000) {
+      const m = c.iterator.CurrentMeasureIndex + 1;
+      const startQ = (c.iterator.CurrentMeasure?.AbsoluteTimestamp?.RealValue ?? 0) * 4;
+      const off = Math.max(0, c.iterator.currentTimeStamp.RealValue * 4 - startQ);
+      const key = `${m}:${Math.round(off * 1000)}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        let gns: Osmd[] = [];
+        try { gns = c.GNotesUnderCursor() ?? []; } catch { gns = []; }
+        for (const gn of gns) {
+          try {
+            if (gn.sourceNote?.isRest?.()) continue;
+            const owner = gn.sourceNote?.ParentStaff?.ParentInstrument;
+            if (mine && owner && owner !== mine) continue;
+            const el = gn.getSVGGElement?.() as SVGElement | undefined;
+            if (el) { const l = map.get(key) ?? []; l.push(el); map.set(key, l); }
+          } catch { /* a note we cannot reach is simply not coloured */ }
+        }
+      }
+      c.iterator.moveToNext();
+    }
+    c.reset();
+    cur.current = 0;
+    placed.current = { step: -1, measure: -1 };
+    const { q, measure, off } = lastPos.current;
+    place(q, measure, false, off);
+    noteEls.current = map;
+    return map;
+  }
+
+  function clearAnnotations() {
+    for (const el of painted.current.els) { el.style.removeProperty('fill'); el.style.removeProperty('stroke'); }
+    for (const el of painted.current.added) el.remove();
+    painted.current = { els: [], added: [] };
+  }
+
+  function paint() {
+    clearAnnotations();
+    if (!marks?.length && !labels?.length) return;
+    const map = noteMap();
+    if (!map) return;
+    const osmd = osmdRef.current;
+    const fs = Math.max(9, (osmd?.zoom ?? 1) * UNIT * 1.5);
+    const addText = (g: SVGElement, text: string, color: string, dy: number, extra?: Record<string, string>) => {
+      let bb: DOMRect;
+      try { bb = (g as unknown as SVGGraphicsElement).getBBox(); } catch { return; }
+      if (!bb.width && !bb.height) return;
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.textContent = text;
+      t.setAttribute('x', String(bb.x + bb.width / 2));
+      t.setAttribute('y', String(dy < 0 ? bb.y - 3 : bb.y + bb.height + fs + 1));
+      t.setAttribute('text-anchor', 'middle');
+      t.setAttribute('font-size', String(fs));
+      t.setAttribute('font-weight', '700');
+      t.setAttribute('font-family', 'system-ui, sans-serif');
+      t.style.fill = color;
+      t.style.stroke = 'none';
+      for (const [k, v] of Object.entries(extra ?? {})) t.setAttribute(k, v);
+      g.appendChild(t);
+      painted.current.added.push(t);
+    };
+    for (const m of marks ?? []) {
+      const color = MARK_COLOR[m.kind];
+      for (const g of map.get(noteKey(m.measure, m.offQ)) ?? []) {
+        g.querySelectorAll<SVGElement>('path, rect, ellipse, circle').forEach((c) => { c.style.fill = color; c.style.stroke = color; painted.current.els.push(c); });
+        g.setAttribute('data-mark', m.kind);
+        if (m.arrow) addText(g, m.arrow === 'up' ? '↑' : '↓', color, -1, { 'data-arrow': m.arrow });
+      }
+    }
+    for (const l of labels ?? []) {
+      for (const g of map.get(noteKey(l.measure, l.offQ)) ?? []) {
+        addText(g, l.text, '#5b4a2a', 1, { 'data-finger': l.text, 'data-opts': [l.text, ...(l.alts ?? [])].join('|'), 'data-i': '0', style: 'cursor:pointer' });
+      }
+    }
+  }
+  const paintRef = useRef(paint);
+  paintRef.current = paint;
+  // marks and fingerings are painted again after every redraw and whenever they change
+  useEffect(() => { if (!busy) paintRef.current(); }, [marks, labels, layout, busy]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function onClick(e: React.MouseEvent) {
     if (swallowClick.current) { swallowClick.current = false; return; }
+    // a fingering: tap to see the next way to play the note instead of jumping to the bar
+    const f = (e.target as Element | null)?.closest?.('[data-finger]');
+    if (f) {
+      const opts = (f.getAttribute('data-opts') ?? '').split('|');
+      if (opts.length > 1) {
+        const i = (Number(f.getAttribute('data-i') ?? '0') + 1) % opts.length;
+        f.setAttribute('data-i', String(i));
+        f.textContent = opts[i];
+        f.setAttribute('data-alt', i === 0 ? '0' : '1');
+      }
+      return;
+    }
     const bar = barAt(e.clientX, e.clientY);
     if (bar > 0) seekRef.current(bar);
   }

@@ -1,16 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
-import { seedScore, fixture, collectConsoleErrors } from './helpers';
+import { collectConsoleErrors, openScore, openPractice } from './helpers';
 
-export async function openScore(page: Page, file = 'scale.musicxml', id = 'p1') {
-  await seedScore(page, id, 'Practice Scale', fixture(file));
-  await page.goto(`/score/${id}`);
-  await expect(page.getByTestId('score')).toHaveAttribute('data-busy', '0', { timeout: 30_000 });
-  await expect(page.locator('.score-host svg').first()).toBeVisible();
-}
-export const openPractice = async (page: Page) => {
-  if (!(await page.getByTestId('practice-sheet').isVisible())) await page.getByRole('button', { name: 'Practice' }).click();
-  await expect(page.getByTestId('practice-sheet')).toBeVisible();
-};
 const bar = (page: Page) => page.getByTestId('bar-counter');
 
 test.describe('A. loop and speed trainer', () => {

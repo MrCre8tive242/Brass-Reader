@@ -11,7 +11,10 @@ import { INSTRUMENTS, isInstrumentId, type InstrumentId } from '@/lib/instrument
 import { toConcert, fromConcert } from '@/lib/transpose';
 import { buildTimeline } from '@/lib/timeline';
 import { toMidi } from '@/lib/midi';
-import { detectSourceInstrument, summariseScore, extractPart } from '@/lib/musicxml';
+import { detectSourceInstrument, summariseScore } from '@/lib/musicxml';
+import { songPartsOf, fitBars, mergeScores, mergeTimelines, type SongPart } from '@/lib/song';
+import { DEFAULT_MIX, normalizeMix, type MixState } from '@/lib/mixer';
+import BandPanel from '@/components/BandPanel';
 import { AlertIcon, BackIcon } from '@/components/Icons';
 import { analyseAndRepair } from '@/lib/repair';
 import { Player } from '@/lib/player';
@@ -29,7 +32,10 @@ export default function ScorePage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const [score, setScore] = useState<SavedScore | null | undefined>(undefined);
-  const [source, setSource] = useState<InstrumentId>('trumpet');
+  const [parts, setParts] = useState<SongPart[]>([]);
+  const [myIdx, setMyIdx] = useState(0);
+  const [full, setFull] = useState(false);
+  const [mix, setMix] = useState<Record<string, MixState>>({});
   const [target, setTarget] = useState<InstrumentId>('trumpet');
   const [bpm, setBpm] = useState(100);
   const [zoom, setZoom] = useState(1);
@@ -41,7 +47,6 @@ export default function ScorePage() {
   const [engine, setEngine] = useState<string>('loading');
   const [loadTry, setLoadTry] = useState(0);
   const [blocked, setBlocked] = useState(false);
-  const [part, setPart] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [practiceOpen, setPracticeOpen] = useState(false);
   const [loop, setLoop] = useState<LoopRange | null>(null);
@@ -67,15 +72,20 @@ export default function ScorePage() {
       if (!alive) return;
       setScore(s ?? null);
       if (s) {
-        setSource(s.sourceInstrument);
+        const my = typeof s.partIndex === 'number' ? s.partIndex : (s.myPart ?? 0);
+        const list = songPartsOf(s, my);
+        setParts(list);
+        setMyIdx(Math.max(0, Math.min(list.length - 1, my)));
+        // a many-part file saved before ensembles shows every staff together, as it always did
+        setFull(list.length > 1 && typeof s.partIndex !== 'number');
+        setMix(Object.fromEntries(Object.entries(s.mix ?? {}).map(([k, v]) => [k, normalizeMix(v)])));
         const t = lsGet(`target:${id}`);
-        setTarget(isInstrumentId(t) ? t : s.sourceInstrument);
+        setTarget(isInstrumentId(t) ? t : (list[my]?.instrument ?? s.sourceInstrument));
         const b = Number(lsGet(`bpm:${id}`));
         // the tempo you last used wins; otherwise the metronome mark printed on the music, if it was read
         const printed = summariseScore(s.sourceXml).tempo;
         if (b >= 30 && b <= 240) setBpm(b);
         else if (printed && printed >= 30 && printed <= 240) setBpm(printed);
-        setPart(typeof s.partIndex === 'number' ? s.partIndex : null);
         setLoop(s.loop ?? null);
         if (s.loop) setLoopDraft(s.loop);
         setTrainer(normalizeTrainer(s.trainer));
@@ -84,26 +94,43 @@ export default function ScorePage() {
     return () => { alive = false; };
   }, [id]);
 
-  // a score with several instruments: show and play one part (or all of them together)
-  const summary = useMemo(() => (score ? summariseScore(score.sourceXml) : null), [score]);
-  const partXml = useMemo(() => {
-    if (!score) return null;
-    return part !== null && summary && summary.parts.length > 1 ? extractPart(score.sourceXml, part) : score.sourceXml;
-  }, [score, summary, part]);
+  // the band: one sheet per instrument. "my part" is shown (or all stacked) and the rest play along.
+  const myPart = parts[myIdx];
+  const source: InstrumentId = myPart?.instrument ?? 'trumpet';
+  const partXml = myPart?.xml ?? null;
 
   // bars that do not add up to the time signature: padded with rests (so cursor and audio agree) and flagged
   const repair = useMemo(() => (partXml ? analyseAndRepair(partXml) : null), [partXml]);
 
   const derived = useMemo(() => {
-    if (!score || !repair) return null;
+    if (!score || !repair || !myPart) return null;
     try {
       const concert = toConcert(repair.xml, source);
-      const xml = fromConcert(concert, target);
-      return { xml, tl: buildTimeline(xml), err: null as string | null };
+      const mineXml = fromConcert(concert, target);
+      const tlMine = buildTimeline(mineXml);
+      const n = tlMine.measureCount;
+      const warnings: string[] = [];
+      const others: { index: number; name: string; xml: string; tl: ReturnType<typeof buildTimeline> }[] = [];
+      parts.forEach((p, i) => {
+        if (i === myIdx) return;
+        try {
+          const c = toConcert(analyseAndRepair(p.xml).xml, p.instrument);
+          const fit = fitBars(fromConcert(c, p.instrument), n);
+          if (fit.added) warnings.push(`${p.name} has ${fit.bars - fit.added} bars but ${myPart.name} has ${n}: ${fit.added} bar${fit.added > 1 ? 's' : ''} of rests added at the end.`);
+          if (fit.removed) warnings.push(`${p.name} has ${fit.bars + fit.removed} bars but ${myPart.name} has ${n}: the extra ${fit.removed} bar${fit.removed > 1 ? 's' : ''} will not play.`);
+          others.push({ index: i, name: p.name, xml: fit.xml, tl: buildTimeline(fit.xml) });
+        } catch (e) {
+          warnings.push(`${p.name} could not be read (${(e as Error).message}); it will be silent.`);
+        }
+      });
+      const tl = others.length ? mergeTimelines(tlMine, myIdx, others.map((o) => ({ index: o.index, tl: o.tl }))) : tlMine;
+      const ordered = [{ xml: mineXml, name: myPart.name }, ...others.map((o) => ({ xml: o.xml, name: o.name }))];
+      const exportXml = ordered.length > 1 ? mergeScores(ordered) : mineXml;
+      return { xml: full && ordered.length > 1 ? exportXml : mineXml, exportXml, tl, err: null as string | null, warnings };
     } catch (e) {
-      return { xml: '', tl: null, err: (e as Error).message };
+      return { xml: '', exportXml: '', tl: null, err: (e as Error).message, warnings: [] as string[] };
     }
-  }, [score, repair, source, target]);
+  }, [score, repair, myPart, myIdx, parts, source, target, full]);
 
   // player lifecycle
   useEffect(() => {
@@ -143,14 +170,17 @@ export default function ScorePage() {
     return () => { gone = true; document.removeEventListener('visibilitychange', get); void lock?.release().catch(() => {}); };
   }, []);
 
+  // every part plays with its own instrument's sound; my part uses the "Play as" instrument
+  const soundKey = parts.map((p, i) => (i === myIdx ? target : p.instrument)).join(',');
   useEffect(() => {
     const p = player.current;
-    if (!p) return;
+    if (!p || !soundKey) return;
     let alive = true;
     setEngine('loading');
-    p.load(target).then((e) => { if (alive) setEngine(e); }).catch(() => { if (alive) setEngine('synth'); });
+    p.loadParts(soundKey.split(',') as InstrumentId[]).then((e) => { if (alive) setEngine(e); }).catch(() => { if (alive) setEngine('synth'); });
     return () => { alive = false; };
-  }, [target, loadTry]);
+  }, [soundKey, loadTry]);
+  useEffect(() => { player.current?.setMix(parts.map((p) => mix[p.id] ?? DEFAULT_MIX)); }, [parts, mix]);
 
   useEffect(() => {
     if (derived?.tl && player.current) {
@@ -226,23 +256,47 @@ export default function ScorePage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [playPause, goBar]);
 
-  const onSource = (s: InstrumentId) => { setSource(s); void updateScore(id, { sourceInstrument: s, sourceAuto: false }); };
-  const onPart = (v: string) => {
-    const n = v === 'all' ? null : Number(v);
-    setPart(n);
-    const patch: Partial<SavedScore> = { partIndex: n };
-    // an auto-detected "written for" follows the part (trumpet line vs trombone line)
-    if (score?.sourceAuto !== false && score) {
-      const d = detectSourceInstrument(n === null ? score.sourceXml : extractPart(score.sourceXml, n)).id;
-      setSource(d);
-      patch.sourceInstrument = d;
-    }
+  /** Save the band: the parts (when there are several or they were saved before), which one is mine, and what mine is written for. */
+  const saveBand = useCallback((nextParts: SongPart[], my: number, isFull: boolean, extra: Partial<SavedScore> = {}) => {
+    const patch: Partial<SavedScore> = { myPart: my, partIndex: isFull ? null : my, sourceInstrument: nextParts[my]?.instrument ?? 'trumpet', ...extra };
+    if (nextParts.length > 1 || score?.parts) patch.parts = nextParts;
+    // keep the in-memory record in step so later saves start from what is stored
+    setScore((s) => (s ? { ...s, ...patch } : s));
     void updateScore(id, patch);
+  }, [id, score?.parts]);
+  const onSource = (ins: InstrumentId) => {
+    const next = parts.map((p, i) => (i === myIdx ? { ...p, instrument: ins } : p));
+    setParts(next);
+    saveBand(next, myIdx, full, { sourceAuto: false });
   };
+  const onPart = (v: string) => {
+    if (v === 'all') { setFull(true); saveBand(parts, myIdx, true); return; }
+    const n = Number(v);
+    setMyIdx(n); setFull(false);
+    saveBand(parts, n, false);
+    // the part you play follows its own sheet unless you chose a sound by hand
+    const ins = parts[n]?.instrument;
+    if (ins && lsGet(`target:${id}`) === null) setTarget(ins);
+  };
+  const onFull = (v: boolean) => { setFull(v); saveBand(parts, myIdx, v); };
+  const onMix = (partId: string, patch: Partial<MixState>) => {
+    setMix((m) => {
+      const next = { ...m, [partId]: normalizeMix({ ...(m[partId] ?? DEFAULT_MIX), ...patch }) };
+      void updateScore(id, { mix: next });
+      return next;
+    });
+  };
+  const onPartInstrument = (i: number, ins: InstrumentId) => {
+    const next = parts.map((p, k) => (k === i ? { ...p, instrument: ins } : p));
+    setParts(next);
+    saveBand(next, myIdx, full, i === myIdx ? { sourceAuto: false } : {});
+  };
+  const myMuted = !!myPart && !!mix[myPart.id]?.mute;
+  const toggleMuteMine = () => { if (myPart) onMix(myPart.id, { mute: !myMuted }); };
   const onTarget = (t: InstrumentId) => { setTarget(t); lsSet(`target:${id}`, t); };
 
   const sourceHint = useMemo(() => {
-    if (!partXml) return undefined;
+    if (!partXml || !myPart) return undefined;
     const d = detectSourceInstrument(partXml);
     return d.id === source
       ? `Detected from the music (${d.reason}). Change "Written for" if this part is for another instrument.`
@@ -274,7 +328,7 @@ export default function ScorePage() {
       </main>
     );
   }
-  const many = !!summary && summary.parts.length > 1;
+  const many = parts.length > 1;
 
   return (
     <div className="player-page">
@@ -292,8 +346,8 @@ export default function ScorePage() {
         {many && (
           <label className="picker-one partpick">
             <span className="muted small">Part</span>
-            <select className="sel" aria-label="Part" value={part === null ? 'all' : String(part)} onChange={(e) => onPart(e.target.value)}>
-              {summary!.parts.map((p) => <option key={p.index} value={p.index}>{p.name}{p.clef ? ` (${p.clef} clef)` : ''}</option>)}
+            <select className="sel" aria-label="Part" value={full ? 'all' : String(myIdx)} onChange={(e) => onPart(e.target.value)}>
+              {parts.map((p, i) => <option key={p.id} value={i}>{p.name}{INSTRUMENTS[p.instrument].clef === 'bass' ? ' (bass clef)' : ''}</option>)}
               <option value="all">All parts together</option>
             </select>
           </label>
@@ -304,6 +358,11 @@ export default function ScorePage() {
             {engine === 'soundfont' && <>Sound: {INSTRUMENTS[target].name} samples</>}
             {engine !== 'loading' && engine !== 'soundfont' && <>Sound: simple synth (samples unavailable offline)</>}
           </p>
+          {many && (
+            <button type="button" className={`linkbtn mutemine${myMuted ? ' on' : ''}`} aria-pressed={myMuted} onClick={toggleMuteMine}>
+              {myMuted ? 'Unmute my part' : 'Mute my part'}
+            </button>
+          )}
           {engine !== 'loading' && engine !== 'soundfont' && (
             <button type="button" className="linkbtn" onClick={() => setLoadTry((n) => n + 1)}>Try loading again</button>
           )}
@@ -346,11 +405,17 @@ export default function ScorePage() {
         <p className="disclaimer">Reading is automatic and can make mistakes. Check the notes against your sheet.</p>
         <Downloads
           title={score.title}
-          getMidi={() => toMidi(derived!.tl!, bpm, INSTRUMENTS[target].program, score.title)}
-          getXml={() => derived!.xml}
+          getMidi={() => toMidi(derived!.tl!, bpm, INSTRUMENTS[target].program, score.title, parts.map((p, i) => ({ name: p.name, program: INSTRUMENTS[i === myIdx ? target : p.instrument].program })))}
+          getXml={() => derived!.exportXml}
         />
       </main>
       <PracticeSheet open={practiceOpen} onClose={() => setPracticeOpen(false)}>
+        <Section id="band" title={parts.length > 1 ? `Band (${parts.length} parts)` : 'Band'}>
+          <BandPanel
+            parts={parts} myIdx={myIdx} mix={mix} full={full} scoreId={id} warnings={derived?.warnings ?? []}
+            onMix={onMix} onMy={(i) => onPart(String(i))} onFull={onFull} onInstrument={onPartInstrument}
+          />
+        </Section>
         <Section id="loop" title="Loop and speed trainer" open>
           <LoopPanel measureCount={measureCount} loop={normalizeLoop(loop, measureCount)} draft={loopDraft} trainer={trainer} onDraft={setLoopDraft} onLoop={changeLoop} onTrainer={changeTrainer} />
         </Section>

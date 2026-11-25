@@ -18,6 +18,8 @@ export default function Home() {
   const [scores, setScores] = useState<SavedScore[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [confirm, setConfirm] = useState<string | null>(null);
+  const [addTo, setAddTo] = useState<string | undefined>(undefined);
+  useEffect(() => { try { setAddTo(new URLSearchParams(window.location.search).get('addTo') ?? undefined); } catch { /* ignore */ } }, []);
   const refresh = () => listScores().then((s) => { setScores(s); setFailed(false); }).catch(() => { setScores([]); setFailed(true); });
   useEffect(() => { refresh(); }, []);
 
@@ -32,7 +34,7 @@ export default function Home() {
       </header>
 
       <h2 className="sec">Add music</h2>
-      <Uploader />
+      <Uploader addTo={addTo} />
 
       <h2 className="sec">Your music</h2>
       {scores === null && <p className="muted loading-line"><span className="spinner" aria-hidden /> Loading your music…</p>}

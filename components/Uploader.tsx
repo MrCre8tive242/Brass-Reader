@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { callOmr, prepareFiles, getPasscode, setPasscode, OmrError, type OmrFlag } from '@/lib/omrClient';
 import { extractTitle, detectSourceInstrument, summariseScore, extractPart, keyName, type ScoreSummary } from '@/lib/musicxml';
 import { canRekey, rekeyXml } from '@/lib/omrNotation';
-import { newId, saveScore } from '@/lib/library';
+import { newId, saveScore, getScore, type SavedScore } from '@/lib/library';
+import { addPartsTo, songPartsOf } from '@/lib/song';
 import { INSTRUMENT_IDS, INSTRUMENTS, type InstrumentId } from '@/lib/instruments';
 import { AlertIcon, CameraIcon, CheckIcon, CloseIcon, FileIcon, RotateIcon } from './Icons';
 
@@ -31,8 +32,11 @@ function titleFromName(name: string) {
   return !t || /^(img|image|dsc|pxl|photo|scan)?[\s\d]*$/i.test(t) ? 'Untitled score' : t;
 }
 
-export default function Uploader() {
+export default function Uploader({ addTo }: { addTo?: string }) {
   const router = useRouter();
+  // adding another instrument's sheet to a song that is already in the library
+  const [target, setTarget] = useState<SavedScore | null>(null);
+  useEffect(() => { if (addTo) getScore(addTo).then((s) => setTarget(s ?? null)).catch(() => setTarget(null)); }, [addTo]);
   const [items, setItems] = useState<Item[]>([]);
   const [source, setSource] = useState<InstrumentId | 'auto'>('auto');
   const [partHint, setPartHint] = useState('');
@@ -62,6 +66,18 @@ export default function Uploader() {
   useEffect(() => { if (review) reviewRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }, [review]);
 
   async function save(xml: string, title: string, origin: 'scan' | 'musicxml', extra: { flags?: OmrFlag[]; partIndex?: number | null } = {}) {
+    if (addTo) {
+      const song = target ?? (await getScore(addTo));
+      if (!song) throw new Error('That song is not in the library on this device.');
+      const my = typeof song.partIndex === 'number' ? song.partIndex : (song.myPart ?? 0);
+      const parts = addPartsTo(songPartsOf(song, my), xml, newId, source === 'auto' ? undefined : source, typeof extra.partIndex === 'number' ? extra.partIndex : undefined);
+      // the song now has several parts: my part stays shown (not the stacked score) until asked for
+      await saveScore({ ...song, parts, myPart: my, partIndex: my });
+      router.push(`/score/${song.id}`);
+      return;
+    }
+    // a file with several instruments opens on the first part (the band plays along); "All" is asked for explicitly
+    if (extra.partIndex === undefined && summariseScore(xml).parts.length > 1) extra = { ...extra, partIndex: 0 };
     const id = newId();
     const chosen = typeof extra.partIndex === 'number' ? extractPart(xml, extra.partIndex) : xml;
     const sourceInstrument = source === 'auto' ? detectSourceInstrument(chosen).id : source;
@@ -158,6 +174,11 @@ export default function Uploader() {
 
   return (
     <section className="uploader" aria-label="Add music">
+      {addTo && (
+        <p className="addto" data-testid="add-to-banner">
+          Adding a part to <strong>{target?.title ?? 'this song'}</strong>. Scan the other instrument&apos;s sheet, or open a MusicXML file; it joins the band. <a href="/">Cancel</a>
+        </p>
+      )}
       <div className="actions">
         <label className="btn primary big">
           <CameraIcon /> Take a photo

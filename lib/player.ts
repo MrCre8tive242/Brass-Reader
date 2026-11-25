@@ -2,6 +2,7 @@ import { INSTRUMENTS, type InstrumentId } from './instruments';
 import { measureAt, slotAt, firstQ, type Timeline } from './timeline';
 import { unlockAudio, releaseAudio } from './audioUnlock';
 import { trainerBpm, type Trainer } from './loop';
+import { partGain, type MixState } from './mixer';
 
 export interface Click { timeQ: number; accent: boolean }
 
@@ -131,6 +132,10 @@ export class Player {
   onPass: (pass: number, bpm: number) => void = () => {};
 
   private voice: Voice | null = null;
+  /** Sound of each part of the band (index = part). Falls back to `voice`. */
+  private partVoices: (Voice | null)[] = [];
+  private voiceCache = new Map<InstrumentId, { voice: Voice; engine: 'soundfont' | 'synth' }>();
+  private mix: MixState[] = [];
   private tl: Timeline | null = null;
   private clicks: Click[] = [];
   private bpm = 100;
@@ -175,10 +180,35 @@ export class Player {
 
   /** Load the instrument's samples; falls back to a synth if the CDN is unreachable. */
   async load(id: InstrumentId): Promise<'soundfont' | 'synth'> {
+    return this.loadParts([id]);
+  }
+
+  /** Load one sound per part (parts that share an instrument share the samples). Part i plays with ids[i]. */
+  async loadParts(ids: InstrumentId[]): Promise<'soundfont' | 'synth'> {
     const token = ++this.loadToken;
     const wasPlaying = this.playing;
-    let voice: Voice | null = null;
-    let engine: 'soundfont' | 'synth' = 'synth';
+    const unique = [...new Set(ids)];
+    const got = await Promise.all(unique.map(async (id) => {
+      const cached = this.voiceCache.get(id);
+      if (cached && cached.engine === 'soundfont') return [id, cached] as const;
+      return [id, await this.makeVoice(id)] as const;
+    }));
+    if (token !== this.loadToken) return got[0]?.[1].engine ?? 'synth'; // a newer load superseded this one
+    const byId = new Map(got);
+    for (const [id, v] of got) this.voiceCache.set(id, v);
+    const previous = new Set<Voice>([...(this.voice ? [this.voice] : []), ...this.partVoices.filter((v): v is Voice => !!v)]);
+    this.partVoices = ids.map((id) => byId.get(id)!.voice);
+    this.voice = this.partVoices[0] ?? this.voice;
+    const inUse = new Set<Voice>(this.partVoices.filter((v): v is Voice => !!v));
+    for (const v of previous) if (!inUse.has(v)) v.stop();
+    const engines = got.map(([, v]) => v.engine);
+    this.engine = engines.every((e) => e === 'soundfont') ? 'soundfont' : 'synth';
+    // swap sounds without losing the place: sounding notes are re-attacked on the new instrument
+    if (wasPlaying || this.playing) this.restartFrom(this.currentQ(), false, 0);
+    return this.engine;
+  }
+
+  private async makeVoice(id: InstrumentId): Promise<{ voice: Voice; engine: 'soundfont' | 'synth' }> {
     try {
       const { Soundfont, CacheStorage } = await import('smplr');
       // keep downloaded samples in the browser cache: rehearsal rooms often have no signal
@@ -189,22 +219,23 @@ export class Player {
         inst.ready,
         new Promise((_, rej) => setTimeout(() => rej(new Error('soundfont load timeout')), LOAD_TIMEOUT_MS)),
       ]);
-      voice = {
-        start: ({ note, time, duration, velocity }) => { inst.start({ note, time, duration, velocity: Math.round(velocity * 127) }); },
-        stop: () => inst.stop(),
+      return {
+        voice: {
+          start: ({ note, time, duration, velocity }) => { inst.start({ note, time, duration, velocity: Math.round(velocity * 127) }); },
+          stop: () => inst.stop(),
+        },
+        engine: 'soundfont',
       };
-      engine = 'soundfont';
     } catch {
-      voice = new SynthVoice(this.ctx, this.master);
+      return { voice: new SynthVoice(this.ctx, this.master), engine: 'synth' };
     }
-    if (token !== this.loadToken) return engine; // a newer load superseded this one
-    this.voice?.stop();
-    this.voice = voice;
-    this.engine = engine;
-    // swap sounds without losing the place: sounding notes are re-attacked on the new instrument
-    if (wasPlaying || this.playing) this.restartFrom(this.currentQ(), false, 0);
-    return engine;
   }
+
+  /** Per part: loudness, mute and solo. Takes effect for notes scheduled from now on. */
+  setMix(mix: MixState[]) { this.mix = mix.map((m) => ({ ...m })); }
+
+  /** The audio context (the microphone is read through the same clock). */
+  get context(): AudioContext { return this.ctx; }
 
   setTimeline(tl: Timeline) {
     const q = this.tl ? this.currentQ() : 0;
@@ -343,6 +374,7 @@ export class Player {
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
     if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; }
     this.voice?.stop();
+    for (const v of this.partVoices) if (v && v !== this.voice) v.stop();
   }
 
   private restartFrom(q: number, withCountIn = false, lead = 0.06, newRun = false) {
@@ -371,7 +403,7 @@ export class Player {
     for (let i = 0; i < this.nextEvent; i++) {
       const e = this.tl.events[i];
       const remQ = e.timeQ + e.durQ - q;
-      if (remQ > 0.02) this.held.push({ midi: e.midi, remQ });
+      if (remQ > 0.02) this.held.push({ midi: e.midi, remQ, part: e.part ?? 0 });
     }
     this.nextClick = this.clicks.findIndex((c) => c.timeQ >= q - 1e-6);
     if (this.nextClick < 0) this.nextClick = this.clicks.length;
@@ -400,7 +432,7 @@ export class Player {
     this.raf = requestAnimationFrame(frame);
   }
 
-  private held: { midi: number; remQ: number }[] = [];
+  private held: { midi: number; remQ: number; part: number }[] = [];
   private countClicks: { offsetQ: number; accent: boolean }[] = [];
   private countInPending = false;
   private countInNext = 0;
@@ -446,7 +478,7 @@ export class Player {
     const endQ = this.loopActive && this.loop ? this.loop.endQ : Infinity;
     if (this.held.length && this.timeOf(this.passStartQ) <= horizon) {
       const when = Math.max(this.timeOf(this.passStartQ), this.ctx.currentTime);
-      for (const h of this.held) this.play1(h.midi, when, Math.max(0.05, Math.min(h.remQ, endQ - this.passStartQ) * spq * 0.97), 0);
+      for (const h of this.held) this.play1(h.midi, when, Math.max(0.05, Math.min(h.remQ, endQ - this.passStartQ) * spq * 0.97), h.part);
       this.held = [];
     }
     const ev = this.tl.events;
@@ -500,13 +532,15 @@ export class Player {
     for (let i = 0; i < this.nextEvent; i++) {
       const e = this.tl.events[i];
       const remQ = e.timeQ + e.durQ - sq;
-      if (remQ > 0.02) this.held.push({ midi: e.midi, remQ });
+      if (remQ > 0.02) this.held.push({ midi: e.midi, remQ, part: e.part ?? 0 });
     }
     this.pendingPass.push({ at: tEnd, pass: this.pass, bpm: this.bpm });
   }
 
   private play1(note: number, time: number, duration: number, part: number) {
-    this.voice?.start({ note, time, duration, velocity: 0.8 });
+    const g = partGain(this.mix, part);
+    if (g <= 0) return;
+    (this.partVoices[part] ?? this.voice)?.start({ note, time, duration, velocity: 0.8 * g });
   }
 
   private click(time: number, accent: boolean) {

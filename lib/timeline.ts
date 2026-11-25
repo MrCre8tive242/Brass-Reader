@@ -341,3 +341,11 @@ export function firstQ(tl: Timeline, measure: number): number {
 export function measureAt(tl: Timeline, q: number): number {
   return tl.order[slotAt(tl, q)] ?? 1;
 }
+
+/** Distance in quarters from the start of the played bar that holds `timeQ`. */
+export function offsetInBar(tl: Timeline, timeQ: number): number {
+  return Math.max(0, timeQ - (tl.measureStartsQ[slotAt(tl, timeQ)] ?? 0));
+}
+
+/** Key that finds a note on the drawn score: written bar and offset into the bar. */
+export const noteKey = (measure: number, offQ: number) => `${measure}:${Math.round(offQ * 1000)}`;

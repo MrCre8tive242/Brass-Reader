@@ -257,3 +257,29 @@ details.warn summary strong { margin-right: 0.25em; }
 .trainer .num { width: 100%; }
 .trainer p { grid-column: 1 / -1; margin: 0; }
 .passline { text-align: center; font-weight: 700; font-size: 0.9rem; font-variant-numeric: tabular-nums; color: var(--accent); margin: 0 0 4px; }
+.mixer { list-style: none; margin: 4px 0; padding: 0; display: grid; gap: 8px; }
+.mixrow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.mixrow.mine { border-color: var(--accent); }
+.mixname { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.badge { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 8px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+.mixrow .sel { width: 100%; min-height: 48px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel2); color: var(--text); font: inherit; padding: 0 10px; }
+.mixctl { display: flex; align-items: center; gap: 8px; }
+.mixctl input[type='range'] { flex: 1; min-width: 0; min-height: 48px; accent-color: var(--accent); }
+.tbtn.on { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.linkbtn.mutemine { min-height: 48px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); text-decoration: none; }
+.linkbtn.mutemine.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--panel)); }
+.addto { margin: 0 0 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.pitchpanel .tip, .recpanel .tip { margin-top: 0; }
+.btn.on { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.heard { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 8ch; }
+.psummary { margin-top: 6px; padding: 8px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); }
+.psummary p { margin: 2px 0; }
+.recdot { color: var(--danger); font-weight: 700; }
+.recdot::before { content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--danger); margin-right: 6px; animation: blink 1s infinite; }
+@keyframes blink { 50% { opacity: 0.25; } }
+.modes { border: 0; padding: 0; margin: 6px 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.modes legend { width: 100%; padding: 0; }
+.takes { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 8px; }
+.take { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.takebtns { display: flex; gap: 6px; }
+.takebtns .btn.sm { padding: 0 12px; }
