@@ -66,10 +66,18 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, o
     cur.current = 0;
   }
 
+  /**
+   * Full-height box per written bar: x/width from the bar's own bounds, y/height from the staff
+   * itself (top line .. bottom line of every staff in the system, plus room for ledger lines), so the
+   * box never depends on where the notes happen to sit.
+   */
   function measureBoxes(osmd: Osmd) {
     const list: Box[] = [];
     const zoom = osmd.zoom ?? 1;
-    const ml = osmd.GraphicSheet.MeasureList as Array<Array<{ PositionAndShape: { AbsolutePosition: { x: number; y: number }; BorderLeft: number; BorderRight: number; BorderTop: number; BorderBottom: number } } | undefined>>;
+    const staffH = osmd.EngravingRules?.StaffHeight ?? 4;
+    const padY = 2.2; // staff spaces above and below, for ledger lines
+    type GM = { PositionAndShape: { AbsolutePosition: { x: number; y: number }; BorderLeft: number; BorderRight: number } } | undefined;
+    const ml = osmd.GraphicSheet.MeasureList as GM[][];
     ml.forEach((staves, i) => {
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
       for (const gm of staves) {
@@ -77,11 +85,12 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, o
         const p = gm.PositionAndShape;
         x0 = Math.min(x0, p.AbsolutePosition.x + p.BorderLeft);
         x1 = Math.max(x1, p.AbsolutePosition.x + p.BorderRight);
-        y0 = Math.min(y0, p.AbsolutePosition.y + p.BorderTop);
-        y1 = Math.max(y1, p.AbsolutePosition.y + p.BorderBottom);
+        y0 = Math.min(y0, p.AbsolutePosition.y);
+        y1 = Math.max(y1, p.AbsolutePosition.y + staffH);
       }
       if (x0 === Infinity) { list[i] = { x: 0, y: 0, w: 0, h: 0 }; return; }
-      list[i] = { x: x0 * UNIT * zoom, y: y0 * UNIT * zoom, w: (x1 - x0) * UNIT * zoom, h: (y1 - y0) * UNIT * zoom };
+      const k = UNIT * zoom;
+      list[i] = { x: x0 * k, y: (y0 - padY) * k, w: (x1 - x0) * k, h: (y1 - y0 + 2 * padY) * k };
     });
     boxes.current = list;
   }

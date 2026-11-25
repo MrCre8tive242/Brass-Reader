@@ -60,3 +60,30 @@ test('tap-to-seek on a repeated bar goes to its first pass; next bar follows pla
   await page.getByRole('button', { name: 'Next bar' }).click(); // play order: after bar 3 comes bar 1 again
   await expect(bar(page)).toHaveText('Bar 1 / 5');
 });
+
+for (const [inst, file] of [['trumpet', 'qa-timesig.musicxml'], ['trombone', 'qa-timesig.musicxml'], ['trombone', 'qa-twoparts.musicxml']] as const) {
+  test(`bar highlight covers the whole staff for every bar (${inst}, ${file})`, async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 900 });
+    await openScore(page, file, 'hl-' + inst);
+    if (inst !== 'trumpet') await page.getByLabel('Play as').selectOption(inst);
+    await expect(page.getByTestId('score')).toHaveAttribute('data-busy', '0');
+    await page.waitForTimeout(500);
+    const count = Number((await bar(page).textContent())!.match(/\/ (\d+)/)![1]);
+    for (let i = 1; i <= count; i++) {
+      const r = await page.evaluate(() => {
+        const h = document.querySelector('[data-testid="bar-highlight"]') as HTMLElement;
+        const c = document.querySelector('img[id^="cursorImg"]') as HTMLElement;
+        const a = h.getBoundingClientRect(), b = c.getBoundingClientRect();
+        return { hl: [a.left, a.top, a.right, a.bottom], cur: [b.left, b.top, b.right, b.bottom], shown: getComputedStyle(h).display, shadow: getComputedStyle(h).boxShadow };
+      });
+      expect(r.shown).toBe('block');
+      expect(r.shadow).not.toBe('none');
+      expect(r.hl[1]).toBeLessThanOrEqual(r.cur[1] + 1); // top covers the cursor
+      expect(r.hl[3]).toBeGreaterThanOrEqual(r.cur[3] - 1);
+      expect(r.hl[3] - r.hl[1]).toBeGreaterThanOrEqual(r.cur[3] - r.cur[1]); // at least staff height
+      expect(r.cur[0]).toBeGreaterThanOrEqual(r.hl[0] - 2);
+      expect(r.cur[2]).toBeLessThanOrEqual(r.hl[2] + 2);
+      if (i < count) await page.getByRole('button', { name: 'Next bar' }).click();
+    }
+  });
+}
