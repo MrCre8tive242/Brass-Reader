@@ -1,107 +1,77 @@
 import { playbackRateFor, type DrumHit, type Groove, type KitInst } from './groove';
 import { SLICE_XF, type Slice } from './grooveAnalysis';
+import { KIT_TAKES, TIER_VEL, renderKit, tierOf, type Tier } from './kitSynth';
 
 /** Where the audio of a recorded groove comes from, and which groove the hits belong to. */
 export interface DrumSource { groove: Groove; buffer: AudioBuffer | null }
 
 export interface DrumLogEntry { t: number; q: number; inst?: string; slice?: number }
 
-const noiseCache = new WeakMap<BaseAudioContext, AudioBuffer>();
-function noise(ctx: BaseAudioContext): AudioBuffer {
-  let b = noiseCache.get(ctx);
-  if (!b) {
-    b = ctx.createBuffer(1, Math.round(ctx.sampleRate * 0.1), ctx.sampleRate);
-    const d = b.getChannelData(0);
-    let seed = 987654321;
-    for (let i = 0; i < d.length; i++) { seed = (seed * 1664525 + 1013904223) >>> 0; d[i] = seed / 2147483648 - 1; }
-    noiseCache.set(ctx, b);
-  }
-  return b;
-}
-
 type Track = (node: AudioScheduledSourceNode) => void;
 
 const STOP_FADE_S = 0.012;
 
-function thump(ctx: BaseAudioContext, out: AudioNode, t: number, vel: number, f0: number, f1: number, decay: number, slap: number, track: Track) {
-  const osc = ctx.createOscillator();
-  const g = ctx.createGain();
-  osc.type = 'sine';
-  osc.frequency.setValueAtTime(f0, t);
-  osc.frequency.exponentialRampToValueAtTime(f1, t + 0.06);
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(Math.max(0.001, vel * 0.9), t + 0.004);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
-  osc.connect(g); g.connect(out);
-  osc.start(t); osc.stop(t + decay + 0.02);
-  track(osc);
-  // the slap of the hand on the skin
-  const n = ctx.createBufferSource();
-  n.buffer = noise(ctx);
-  const bp = ctx.createBiquadFilter();
-  bp.type = 'bandpass'; bp.frequency.value = 1800; bp.Q.value = 0.8;
-  const ng = ctx.createGain();
-  ng.gain.setValueAtTime(vel * slap, t);
-  ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.018);
-  n.connect(bp); bp.connect(ng); ng.connect(out);
-  n.start(t); n.stop(t + 0.03);
-  track(n);
-}
-
-function cowbell(ctx: BaseAudioContext, out: AudioNode, t: number, vel: number, base: number, decay: number, track: Track) {
-  const bp = ctx.createBiquadFilter();
-  bp.type = 'bandpass'; bp.frequency.value = base * 4.8; bp.Q.value = 0.9;
-  const g = ctx.createGain();
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(Math.max(0.001, vel * 0.5), t + 0.002);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
-  bp.connect(g); g.connect(out);
-  for (const [f, detune] of [[base, 0], [base * 1.48, 7]] as const) {
-    const o = ctx.createOscillator();
-    o.type = 'square'; o.frequency.value = f; o.detune.value = detune;
-    o.connect(bp);
-    o.start(t); o.stop(t + decay + 0.02);
-    track(o);
+// the kit's sounds, rendered once per audio context and strength and take, then simply played
+const kitCache = new WeakMap<BaseAudioContext, Map<string, AudioBuffer>>();
+function kitBuffer(ctx: BaseAudioContext, inst: KitInst, tier: Tier, take: number): AudioBuffer {
+  let m = kitCache.get(ctx);
+  if (!m) { m = new Map(); kitCache.set(ctx, m); }
+  const key = `${inst}${tier}${take}`;
+  let b = m.get(key);
+  if (!b) {
+    const samples = renderKit(inst, tier, take, ctx.sampleRate);
+    b = ctx.createBuffer(1, samples.length, ctx.sampleRate);
+    b.getChannelData(0).set(samples);
+    m.set(key, b);
   }
-  // a little clapper rattle
-  const n = ctx.createBufferSource();
-  n.buffer = noise(ctx);
-  const hp = ctx.createBiquadFilter();
-  hp.type = 'highpass'; hp.frequency.value = 5000;
-  const ng = ctx.createGain();
-  ng.gain.setValueAtTime(vel * 0.12, t);
-  ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.03);
-  n.connect(hp); hp.connect(ng); ng.connect(out);
-  n.start(t); n.stop(t + 0.04);
-  track(n);
+  return b;
 }
 
-function whistle(ctx: BaseAudioContext, out: AudioNode, t: number, vel: number, track: Track) {
-  const o = ctx.createOscillator();
-  const lfo = ctx.createOscillator();
-  const lfoGain = ctx.createGain();
-  const g = ctx.createGain();
-  const dur = 0.12 + vel * 0.14;
-  o.type = 'sine'; o.frequency.value = 2900 + vel * 400;
-  lfo.frequency.value = 6.5; lfoGain.gain.value = 45;
-  lfo.connect(lfoGain); lfoGain.connect(o.frequency);
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(Math.max(0.001, vel * 0.22), t + 0.012);
-  g.gain.setValueAtTime(Math.max(0.001, vel * 0.2), t + dur - 0.03);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(g); g.connect(out);
-  for (const n of [o, lfo]) { n.start(t); n.stop(t + dur + 0.02); track(n); }
-}
-
-/** Play one starter-kit sound at AudioContext time `t`. */
-export function playKit(ctx: BaseAudioContext, out: AudioNode, inst: KitInst, t: number, vel: number, track: Track = () => {}) {
-  switch (inst) {
-    case 'bass': return thump(ctx, out, t, vel, 160, 90, 0.26, 0.25, track);
-    case 'lead': return thump(ctx, out, t, vel, 300, 200, 0.16, 0.4, track);
-    case 'cowHi': return cowbell(ctx, out, t, vel, 540, 0.13, track);
-    case 'cowLo': return cowbell(ctx, out, t, vel, 400, 0.2, track);
-    case 'whistle': return whistle(ctx, out, t, vel, track);
+/** Render the sounds a groove needs ahead of time, a few at a time, so the first bar does not have to wait for them. */
+export function warmKit(ctx: BaseAudioContext, hits: { inst?: KitInst; vel: number }[]) {
+  const seen = new Set<string>();
+  const todo: [KitInst, Tier, number][] = [];
+  for (const h of hits) {
+    if (!h.inst) continue;
+    const tier = tierOf(h.vel);
+    if (seen.has(h.inst + tier)) continue;
+    seen.add(h.inst + tier);
+    for (let k = 0; k < KIT_TAKES; k++) todo.push([h.inst, tier, k]);
   }
+  if (!todo.length) return;
+  const step = () => {
+    const end = Date.now() + 6;
+    while (todo.length && Date.now() < end) { const [i, t, k] = todo.shift()!; try { kitBuffer(ctx, i, t, k); } catch { return; } }
+    if (todo.length) setTimeout(step, 30);
+  };
+  setTimeout(step, 0);
+}
+
+// which take each instrument played last, so the same one never comes twice in a row
+const lastTake: Partial<Record<KitInst, number>> = {};
+/** How much each hit differs from the last: a little in pitch (a drum more than a bell) and in loudness. */
+const HUMAN: Record<KitInst, { pitch: number; level: number }> = {
+  bass: { pitch: 0.012, level: 0.07 }, lead: { pitch: 0.016, level: 0.1 }, cowHi: { pitch: 0.003, level: 0.1 }, cowLo: { pitch: 0.003, level: 0.1 }, whistle: { pitch: 0.006, level: 0.06 },
+};
+
+/**
+ * Play one starter-kit sound at AudioContext time `t`. No two hits are quite the same: another take of the sound
+ * than last time, and a touch of pitch and loudness (`rand` is the dice; pass a fixed one for a repeatable result).
+ */
+export function playKit(ctx: BaseAudioContext, out: AudioNode, inst: KitInst, t: number, vel: number, track: Track = () => {}, rand: () => number = Math.random) {
+  const tier = tierOf(vel);
+  let take = Math.floor(rand() * KIT_TAKES) % KIT_TAKES;
+  if (take === lastTake[inst]) take = (take + 1) % KIT_TAKES;
+  lastTake[inst] = take;
+  const src = ctx.createBufferSource();
+  src.buffer = kitBuffer(ctx, inst, tier, take);
+  const h = HUMAN[inst];
+  src.playbackRate.value = 1 + (rand() * 2 - 1) * h.pitch;
+  const g = ctx.createGain();
+  g.gain.value = Math.max(0, (vel / TIER_VEL[tier]) * (1 + (rand() * 2 - 1) * h.level));
+  src.connect(g); g.connect(out);
+  src.start(t);
+  track(src);
 }
 
 export interface SlicePlan {
@@ -148,14 +118,25 @@ export class DrumBus {
 
   /** What the hits play into. Swapped for a new one on `stop()`, so the old one can fade out without touching new hits. */
   private voices: GainNode;
+  private bus: AudioNode;
 
-  constructor(private ctx: BaseAudioContext, dest: AudioNode, expose = false) {
+  /** `expose` names a property of `window` under which the log can be read (for checking sync from outside). */
+  constructor(private ctx: BaseAudioContext, dest: AudioNode, expose?: string) {
     this.out = ctx.createGain();
     this.out.gain.value = 0.8;
     this.out.connect(dest);
+    // the whole kit on an accent can add up to more than full scale: hold the peaks instead of crackling
+    let into: AudioNode = this.out;
+    if (typeof ctx.createDynamicsCompressor === 'function') {
+      const c = ctx.createDynamicsCompressor();
+      c.threshold.value = -9; c.knee.value = 6; c.ratio.value = 8; c.attack.value = 0.002; c.release.value = 0.09;
+      c.connect(this.out);
+      into = c;
+    }
+    this.bus = into;
     this.voices = ctx.createGain();
-    this.voices.connect(this.out);
-    if (expose && typeof window !== 'undefined') (window as unknown as { __brDrumLog?: DrumLogEntry[] }).__brDrumLog = this.log;
+    this.voices.connect(this.bus);
+    if (expose && typeof window !== 'undefined') (window as unknown as Record<string, DrumLogEntry[]>)[expose] = this.log;
   }
 
   setVolume(v: number) { this.out.gain.value = Math.max(0, Math.min(1, v)) * 0.9; }
@@ -192,6 +173,13 @@ export class DrumBus {
     this.track(node);
   }
 
+  /** One kit sound right away (a step being tapped in). */
+  tap(inst: KitInst, vel: number) {
+    const when = this.ctx.currentTime + 0.01;
+    this.log.push({ t: when, q: -1, inst });
+    playKit(this.ctx, this.voices, inst, when, vel, this.track);
+  }
+
   /** Cut everything that sounds or is waiting to sound: a few milliseconds of fade instead of a click. */
   stop() {
     if (!this.active.size) return;
@@ -204,9 +192,9 @@ export class DrumBus {
     } catch { /* ignore */ }
     for (const n of nodes) { try { n.stop(now + STOP_FADE_S + 0.005); } catch { /* already ended */ } }
     this.voices = this.ctx.createGain();
-    this.voices.connect(this.out);
+    this.voices.connect(this.bus);
     setTimeout(() => { try { old.disconnect(); } catch { /* ignore */ } }, 200);
   }
 
-  dispose() { this.stop(); try { this.voices.disconnect(); this.out.disconnect(); } catch { /* ignore */ } }
+  dispose() { this.stop(); try { this.voices.disconnect(); this.bus.disconnect(); this.out.disconnect(); } catch { /* ignore */ } }
 }

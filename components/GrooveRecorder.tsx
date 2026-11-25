@@ -190,7 +190,10 @@ export function GrooveReview({ getCtx, samples, rate, analysis, existing, wav, o
     b.copyToChannel(samples as Float32Array<ArrayBuffer>, 0);
     return b;
   }, [getCtx, samples, rate]);
-  const preview = useGroovePreview(getCtx);
+  const preview = useGroovePreview(getCtx, 120);
+  // while the loop plays it follows the tempo, downbeat, bars and timing as they are changed
+  const { playing: previewing, play: previewPlay } = preview;
+  useEffect(() => { if (previewing) previewPlay(groove, buffer, bpm); }, [groove, buffer, bpm]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const heard = useMemo(() => recordingLevel(samples).verdict, [samples]);
   const barS = loopSeconds(1, bpm);

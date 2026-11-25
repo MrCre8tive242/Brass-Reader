@@ -89,4 +89,51 @@ test.describe('D2. starter kit', () => {
     await expect(page.getByRole('button', { name: 'Lead drum bar 2 step 1: on', exact: true })).toBeVisible();
     expect(errs).toEqual([]);
   });
+
+  test('the editor is an instrument: a tap sounds its step, the pattern goes round with a playhead and takes edits without starting over', async ({ page }) => {
+    const errs = collectConsoleErrors(page);
+    await openDrone(page, 'kit3');
+    await openStudio(page);
+    await page.getByRole('button', { name: 'New step pattern' }).click();
+    type Entry = { t: number; q: number; inst?: string };
+    const log = () => page.evaluate(() => ((window as unknown as { __brPreviewLog?: Entry[] }).__brPreviewLog ?? []).map((e) => ({ ...e })));
+
+    // putting a step down plays its sound once; clearing it is silent
+    await page.getByRole('button', { name: 'Cowbell high step 1: empty', exact: true }).click();
+    await expect.poll(async () => (await log()).length).toBe(1);
+    expect((await log())[0]).toMatchObject({ inst: 'cowHi', q: -1 });
+    await page.getByRole('button', { name: 'Cowbell high step 1: on', exact: true }).click();
+    await page.getByRole('button', { name: 'Bass drum step 1: empty', exact: true }).click();
+    await expect.poll(async () => (await log()).length).toBe(2);
+
+    // it loops (more than the two bars a one-shot would give) and shows where it is
+    await page.getByLabel('Preview tempo BPM').fill('200');
+    await page.getByLabel('Preview tempo BPM').blur();
+    await page.getByRole('button', { name: 'Hear the pattern' }).click();
+    await expect(page.locator('.cell.now').first()).toBeVisible();
+    await expect(page.locator('.cell.now')).toHaveCount(5); // one step of every instrument
+    const col = async () => page.locator('.kitrow').first().locator('.cell').evaluateAll((els) => els.findIndex((e) => e.classList.contains('now')));
+    const seen = new Set<number>();
+    for (let i = 0; i < 25; i++) { seen.add(await col()); await page.waitForTimeout(60); }
+    expect(seen.size).toBeGreaterThan(4);
+
+    // an edit while it plays is heard on the next round, and the loop does not start over
+    const before = (await log()).filter((e) => e.q >= 0);
+    await page.getByRole('button', { name: 'Lead drum step 9: empty', exact: true }).click();
+    await page.waitForTimeout(2600); // two bars at 200 BPM
+    const after = (await log()).filter((e) => e.q >= 0);
+    const lead = after.filter((e) => e.inst === 'lead');
+    expect(lead.length).toBeGreaterThanOrEqual(1);
+    expect(lead.every((e) => Math.abs((e.q % 4) - 2) < 1e-6)).toBe(true);
+    // the bass drum kept coming every bar, exactly 1.2 s apart at 200 BPM, through the edit
+    const bass = after.filter((e) => e.inst === 'bass').map((e) => e.t);
+    expect(bass.length).toBeGreaterThan(before.filter((e) => e.inst === 'bass').length);
+    for (let i = 1; i < bass.length; i++) expect(Math.abs(bass[i] - bass[i - 1] - 1.2)).toBeLessThan(0.005);
+    // the tap is not doubled while the loop plays
+    expect((await log()).filter((e) => e.q === -1)).toHaveLength(2);
+
+    await page.getByRole('button', { name: 'Stop the pattern' }).click();
+    await expect(page.locator('.cell.now')).toHaveCount(0);
+    expect(errs).toEqual([]);
+  });
 });

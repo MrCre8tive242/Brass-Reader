@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { KIT_INSTS, STARTERS, STARTER_LABEL, emptyPattern, resizePattern, type Feel, type Groove, type KitInst, type KitPattern } from '@/lib/groove';
+import { KIT_INSTS, STARTERS, STARTER_LABEL, emptyPattern, resizePattern, stepBeat, type Feel, type Groove, type KitInst, type KitPattern } from '@/lib/groove';
 import { newId } from '@/lib/library';
 import type { StoredGroove } from '@/lib/grooveStore';
 import NumField from './NumField';
@@ -19,14 +19,14 @@ interface Props {
 const LONG_PRESS_MS = 450;
 const STATE_WORD = ['empty', 'soft', 'on', 'accent'];
 
-function Cell({ label, value, beatNo, brush, onSet }: { label: string; value: number; /** 1-based beat number on the first step of every beat. */ beatNo: number | null; brush: number; onSet: (v: number) => void }) {
+function Cell({ label, value, beatNo, brush, now, onSet }: { label: string; value: number; /** The pattern is playing and is on this step. */ now: boolean; /** 1-based beat number on the first step of every beat. */ beatNo: number | null; brush: number; onSet: (v: number) => void }) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const long = useRef(false);
   const clear = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
   return (
     <button
       type="button"
-      className={`cell v${value}${beatNo ? ' beat' : ''}`}
+      className={`cell v${value}${beatNo ? ' beat' : ''}${now ? ' now' : ''}`}
       aria-label={`${label}: ${STATE_WORD[value]}`}
       aria-pressed={value > 0}
       data-v={value}
@@ -68,7 +68,7 @@ export default function KitEditor({ getCtx, existing, from, onSave, onCancel }: 
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const preview = useGroovePreview(getCtx);
+  const preview = useGroovePreview(getCtx, 300);
 
   const groove: Groove = { id: existing?.id ?? 'preview', name, kind: 'kit', createdAt: existing?.createdAt ?? Date.now(), feel, pattern };
   const playing = preview.playing;
@@ -77,8 +77,37 @@ export default function KitEditor({ getCtx, existing, from, onSave, onCancel }: 
   const sig = JSON.stringify([pattern, feel, bpm]);
   const first = useRef(true);
   useEffect(() => { if (first.current) { first.current = false; return; } if (playing) play(); }, [sig]); // eslint-disable-line react-hooks/exhaustive-deps
+  // the step that is sounding, while the pattern plays
+  const { position } = preview;
+  const [nowStep, setNowStep] = useState(-1);
+  const patRef = useRef({ pattern, feel });
+  patRef.current = { pattern, feel };
+  useEffect(() => {
+    if (!playing) { setNowStep(-1); return; }
+    let raf = 0;
+    const frame = () => {
+      const q = position();
+      const { pattern: p, feel: f } = patRef.current;
+      let step = -1;
+      if (q !== null) {
+        const bar = Math.floor(q / 4), inBar = q - bar * 4;
+        // the last step whose time has come (steps are uneven with a swing)
+        let i = 0;
+        while (i + 1 < p.steps && stepBeat(i + 1, p.steps, f) <= inBar + 1e-6) i++;
+        step = (bar % p.bars) * p.steps + i;
+      }
+      setNowStep((s) => (s === step ? s : step));
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, position]);
 
-  const set = (inst: KitInst, i: number, v: number) => setPattern((p) => ({ ...p, tracks: { ...p.tracks, [inst]: p.tracks[inst].map((x, k) => (k === i ? v : x)) } }));
+  const set = (inst: KitInst, i: number, v: number) => {
+    // hear what was just put down (the loop will play it anyway when it is running)
+    if (v > 0 && !playing) preview.tap(inst, [0, 0.35, 0.7, 1][v]);
+    setPattern((p) => ({ ...p, tracks: { ...p.tracks, [inst]: p.tracks[inst].map((x, k) => (k === i ? v : x)) } }));
+  };
   const per = pattern.steps === 16 ? 4 : 3;
   const perRow = [pattern.steps, pattern.steps / 2, per].find((n) => n * 48 + (n - 1) * 5 <= width) ?? per;
 
@@ -121,7 +150,7 @@ export default function KitEditor({ getCtx, existing, from, onSave, onCancel }: 
               <div className="cells" style={{ gridTemplateColumns: `repeat(${perRow}, minmax(0, 1fr))` }}>
                 {Array.from({ length: pattern.steps }, (_, i) => {
                   const idx = b * pattern.steps + i;
-                  return <Cell key={i} label={`${k.label}${pattern.bars > 1 ? ` bar ${b + 1}` : ''} step ${i + 1}`} value={pattern.tracks[k.id][idx]} beatNo={i % per === 0 ? i / per + 1 : null} brush={brush} onSet={(v) => set(k.id, idx, v)} />;
+                  return <Cell key={i} label={`${k.label}${pattern.bars > 1 ? ` bar ${b + 1}` : ''} step ${i + 1}`} value={pattern.tracks[k.id][idx]} beatNo={i % per === 0 ? i / per + 1 : null} brush={brush} now={idx === nowStep} onSet={(v) => set(k.id, idx, v)} />;
                 })}
               </div>
             </div>

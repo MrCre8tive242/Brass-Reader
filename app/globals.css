@@ -326,6 +326,9 @@ details.warn summary strong { margin-right: 0.25em; }
 .cell.v3 { background: var(--accent); border-color: var(--text); box-shadow: inset 0 0 0 3px var(--accent-ink), 0 0 0 2px var(--accent); }
 .beatno { position: absolute; left: 7px; top: 4px; font-size: 0.72rem; font-weight: 800; line-height: 1; color: var(--muted); pointer-events: none; }
 .cell.v2 .beatno, .cell.v3 .beatno { color: var(--accent-ink); }
+/* the step that is sounding while the pattern plays */
+.cell.now { outline: 3px solid var(--text); outline-offset: 1px; }
+.cell.now:not(.v1):not(.v2):not(.v3) { background: color-mix(in srgb, var(--text) 26%, var(--panel)); }
 .swatch { display: inline-block; width: 16px; height: 16px; border-radius: 5px; border: 1px solid color-mix(in srgb, var(--text) 45%, transparent); vertical-align: -3px; background: color-mix(in srgb, var(--text) 7%, var(--panel)); }
 .swatch.v1 { background: color-mix(in srgb, var(--accent) 30%, var(--panel)); border-color: var(--accent); }
 .swatch.v2 { background: var(--accent); border-color: var(--accent); }

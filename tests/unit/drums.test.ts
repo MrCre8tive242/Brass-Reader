@@ -31,7 +31,7 @@ describe('starter kit sounds', () => {
     const hits = grooveBarHits(g, 0);
     hits.slice(0, 3).forEach((h, i) => bus.hit(h, 2 + i, 0.5, 120, h.timeQ));
     expect(bus.log).toHaveLength(3);
-    expect(started.length).toBeGreaterThan(3);
+    expect(started.length).toBe(3); // one rendered sound per hit
     const before = started.length;
     bus.hit({ timeQ: 0, vel: 1, gm: 38, durQ: 0.25, slice: 0 } as DrumHit, 5, 0.5, 120); // no source: silently nothing
     expect(started.length).toBe(before);

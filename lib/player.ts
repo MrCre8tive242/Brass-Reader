@@ -3,7 +3,7 @@ import { measureAt, slotAt, firstQ, type Timeline } from './timeline';
 import { unlockAudio, releaseAudio } from './audioUnlock';
 import { trainerBpm, type Trainer } from './loop';
 import { partGain, type MixState } from './mixer';
-import { DrumBus, type DrumSource } from './drums';
+import { DrumBus, warmKit, type DrumSource } from './drums';
 import type { DrumHit } from './groove';
 
 export interface Click { timeQ: number; accent: boolean }
@@ -175,7 +175,7 @@ export class Player {
     this.clickBus = ctx.createGain();
     this.clickBus.gain.value = 0.5;
     this.clickBus.connect(ctx.destination);
-    this.drums = new DrumBus(ctx, ctx.destination, true);
+    this.drums = new DrumBus(ctx, ctx.destination, '__brDrumLog');
     this.voice = new SynthVoice(ctx, this.master); // placeholder until samples arrive
     // a phone call, Siri or the lock screen suspends the audio clock: stop cleanly instead of freezing mid-bar
     try {
@@ -249,6 +249,7 @@ export class Player {
   setDrums(hits: DrumHit[], source: DrumSource | null) {
     this.drumHits = [...hits].sort((a, b) => a.timeQ - b.timeQ);
     this.drums.source = source;
+    warmKit(this.ctx, this.drumHits);
     if (!this.playing) { this.nextDrum = 0; return; }
     // carry on from the first hit not yet scheduled
     const horizonQ = this.anchorQ + ((this.ctx.currentTime + LOOKAHEAD_S - this.anchorTime) * this.bpm) / 60;
