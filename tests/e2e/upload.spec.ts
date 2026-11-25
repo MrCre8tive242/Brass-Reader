@@ -6,7 +6,7 @@ import { fixture, collectConsoleErrors } from './helpers';
 const fixtures = path.join(__dirname, '../fixtures');
 
 async function stubOmr(page: Page, status = 200) {
-  const seen: { images: string[]; engine: string }[] = [];
+  const seen: { images: string[]; engine: string; tiles?: number[]; hints?: { instrument?: string; part?: string } }[] = [];
   await page.route('**/api/omr', async (route) => {
     if (route.request().method() === 'GET') { await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ claude: true, audiveris: false }) }); return; }
     seen.push(route.request().postDataJSON());
@@ -53,9 +53,12 @@ test('a PDF is rasterised, sent to the (stubbed) reader, saved and opened', asyn
   await expect(page.getByTestId('thumbs')).toBeVisible();
   await page.getByLabel('Scan is written for').selectOption('mellophone');
   await page.getByRole('button', { name: 'Read PDF' }).click();
+  await page.getByRole('button', { name: 'Open score' }).click();
   await page.waitForURL(/\/score\//, { timeout: 60_000 });
   expect(seen).toHaveLength(1);
-  expect(seen[0].images).toHaveLength(2); // the fixture has two pages
+  expect(seen[0].tiles).toHaveLength(2); // the fixture has two pages (a page may be sent as a top and a bottom image)
+  expect(seen[0].images).toHaveLength(seen[0].tiles!.reduce((a, b) => a + b, 0));
+  expect(seen[0].hints).toEqual({ instrument: 'mellophone' });
   for (const im of seen[0].images) {
     expect(im.startsWith('data:image/jpeg;base64,')).toBe(true);
     expect(im.length).toBeGreaterThan(5000);
@@ -65,7 +68,7 @@ test('a PDF is rasterised, sent to the (stubbed) reader, saved and opened', asyn
   expect(errs).toEqual([]);
 });
 
-test('photos are downscaled to at most 2000px and can be reordered/removed', async ({ page }) => {
+test('photos are downscaled to at most 2200px and can be reordered/removed', async ({ page }) => {
   const seen = await stubOmr(page);
   await page.goto('/');
   const png = async (w: number, h: number) => {
@@ -84,13 +87,14 @@ test('photos are downscaled to at most 2000px and can be reordered/removed', asy
   await page.getByRole('button', { name: 'Remove page 2' }).click();
   await expect(page.locator('.thumb')).toHaveCount(1);
   await page.getByRole('button', { name: 'Read 1 page' }).click();
+  await page.getByRole('button', { name: 'Open score' }).click();
   await page.waitForURL(/\/score\//, { timeout: 30_000 });
   expect(seen[0].images).toHaveLength(1);
   const dims = await page.evaluate(async (src) => {
     const img = new Image(); img.src = src; await img.decode();
     return [img.naturalWidth, img.naturalHeight];
   }, seen[0].images[0]);
-  expect(dims).toEqual([2000, 1000]);
+  expect(dims).toEqual([2200, 1100]);
 });
 
 test('reader errors show a clear message with fallbacks', async ({ page }) => {
@@ -148,6 +152,7 @@ test('a large noisy 6-page PDF is shrunk until it fits and is not blocked', asyn
   await page.goto('/');
   await page.getByTestId('file-input').setInputFiles({ name: 'big.pdf', mimeType: 'application/pdf', buffer: noisyPdf(6, 1400, 1800) });
   await page.getByRole('button', { name: 'Read PDF' }).click();
+  await page.getByRole('button', { name: 'Open score' }).click();
   await page.waitForURL(/\/score\//, { timeout: 100_000 });
   expect(seen).toHaveLength(1);
   expect(seen[0].images).toHaveLength(6);
@@ -193,6 +198,7 @@ test('passcode: asked once, stored, wrong one gives a clear error and asks again
   await expect(page.getByRole('button', { name: 'Try free reader' })).toHaveCount(0);
   await page.getByTestId('passcode-input').fill('swordfish');
   await page.getByRole('button', { name: 'Read PDF' }).click();
+  await page.getByRole('button', { name: 'Open score' }).click();
   await page.waitForURL(/\/score\//, { timeout: 30_000 });
   expect(sent).toEqual(['wrong', 'swordfish']);
   // stored: a second scan does not ask
@@ -200,6 +206,7 @@ test('passcode: asked once, stored, wrong one gives a clear error and asks again
   await page.getByTestId('file-input').setInputFiles(path.join(fixtures, 'sample-scan.pdf'));
   await expect(page.getByTestId('passcode-input')).toHaveCount(0);
   await page.getByRole('button', { name: 'Read PDF' }).click();
+  await page.getByRole('button', { name: 'Open score' }).click();
   await page.waitForURL(/\/score\//, { timeout: 30_000 });
   expect(sent[sent.length - 1]).toBe('swordfish');
 });

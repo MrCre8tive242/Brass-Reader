@@ -175,7 +175,7 @@ test('portrait 375: transport is at most 2 rows, Play is centred and the largest
   expect(t.h).toBeLessThanOrEqual(48 * 2 + 64 - 48 + 8 + 12 + 8 + 4); // two rows: 64 + 48 + gaps/padding
   const rows = await page.evaluate(() => {
     const ys = new Set<number>();
-    document.querySelectorAll('.transport button, .transport input, .transport label').forEach((e) => ys.add(Math.round(e.getBoundingClientRect().top / 20)));
+    document.querySelectorAll('.transport button, .transport .bpmfield, .transport label.chk').forEach((e) => ys.add(Math.round(e.getBoundingClientRect().top / 20)));
     return ys.size;
   });
   expect(rows).toBeLessThanOrEqual(3); // tops cluster into two bands (row 1 play is taller so its top differs slightly)

@@ -11,6 +11,10 @@ export interface SavedScore {
   origin?: 'scan' | 'musicxml';
   /** True if `sourceInstrument` was auto-detected from the music (not picked by the user). */
   sourceAuto?: boolean;
+  /** Bars the reader itself was unsure about (printed bar label + what it said). */
+  flags?: { bar: string; text: string }[];
+  /** Which part of a multi-part score to show and play (0-based); undefined or null = all parts together. */
+  partIndex?: number | null;
 }
 
 const PREFIX = 'score:';

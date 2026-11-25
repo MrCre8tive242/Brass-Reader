@@ -10,6 +10,8 @@ interface Props {
   xml: string;
   /** User zoom multiplier on top of the width-based default (1 = automatic size). */
   zoom?: number;
+  /** Written bars (1-based) to mark as "check this bar". */
+  flagged?: number[];
   onSeekMeasure: (measure: number) => void;
   onReady?: (info: { measureCount: number }) => void;
   onError?: (msg: string) => void;
@@ -24,7 +26,7 @@ type Osmd = any;
 
 const UNIT = 10; // OSMD units are 10px at zoom 1
 
-const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, zoom = 1, onSeekMeasure, onReady, onError }, ref) {
+const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, zoom = 1, flagged, onSeekMeasure, onReady, onError }, ref) {
   const wrap = useRef<HTMLDivElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const hl = useRef<HTMLDivElement>(null);
@@ -36,6 +38,8 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
   const lastPos = useRef<{ q: number; measure: number; off: number }>({ q: 0, measure: 1, off: 0 });
   const lastSystemY = useRef(-1);
   const [busy, setBusy] = useState(true);
+  const [layout, setLayout] = useState(0); // bumps after every (re)draw so the bar marks are placed again
+  const placed = useRef<{ step: number; measure: number }>({ step: -1, measure: -1 });
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
   const rerender = useRef<((scroll: boolean) => void) | null>(null);
@@ -119,6 +123,9 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
     const osmd = osmdRef.current;
     if (!osmd || !stepCount.current) return;
     const target = stepFor(measure, offsetQ);
+    // called on every animation frame while playing: do nothing unless the cursor actually moves
+    if (!forceScroll && placed.current.step === target && placed.current.measure === measure) return;
+    placed.current = { step: target, measure };
     const c = osmd.cursor;
     if (target !== cur.current) {
       if (target < cur.current) { c.reset(); cur.current = 0; }
@@ -169,7 +176,11 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
       if (!osmd || cancelled) return;
       const w = wrap.current?.clientWidth ?? 360;
       osmd.zoom = (w < 520 ? 0.62 : w < 900 ? 0.8 : 1) * zoomRef.current;
-      if (loadXml) await osmd.load(xml);
+      if (loadXml) {
+        // readings come without beams: let the engraver group eighths and sixteenths by beat
+        osmd.setOptions({ autoBeam: !xml.includes('<beam') });
+        await osmd.load(xml);
+      }
       if (cancelled) return;
       osmd.render();
       measureBoxes(osmd);
@@ -177,7 +188,9 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
       lastW = w;
       const { q, measure, off } = lastPos.current;
       cur.current = 0;
+      placed.current = { step: -1, measure: -1 };
       place(q, measure, false, off);
+      setLayout((n) => n + 1);
       if (scrollAfter) {
         // after rotate / zoom the layout moved: put the cursor back in view once it has settled
         requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -260,10 +273,14 @@ const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ xml, z
 
   return (
     <div className="score" ref={wrap} data-testid="score" data-busy={busy ? '1' : '0'}>
-      {busy && <div className="score-busy">Drawing score…</div>}
+      {busy && <div className="score-busy"><span className="spinner" aria-hidden /> Drawing score…</div>}
       <div className="score-inner" onClick={onClick}>
         <div className="score-host" ref={host} />
         <div className="bar-hl" ref={hl} data-testid="bar-highlight" />
+        {layout > 0 && (flagged ?? []).map((m) => {
+          const b = boxes.current[m - 1];
+          return b && b.w > 0 ? <div key={m} className="bar-flag" data-testid="bar-flag" style={{ transform: `translate(${b.x}px, ${b.y}px)`, width: b.w, height: b.h }} /> : null;
+        })}
       </div>
     </div>
   );
