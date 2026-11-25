@@ -4,7 +4,7 @@
 Phase: BUILD
 Next model: Sonnet (build agents) → test agents → fixer → Fable (high) refine
 Last updated by: Opus (plan)
-Current step: 2
+Current step: 3
 
 ## Goal
 Mobile-first web app for a brass player (Junkanoo-style brass/drum group). Upload a photo or PDF of sheet music → app reads it into MusicXML → shows the score with a moving playback cursor + highlighted current bar → play/pause/prev bar/next bar/tap-bar-to-seek → set BPM → switch instrument (trumpet, mellophone, baritone, trombone, sousaphone), which changes BOTH the sound and the written part (transposition + clef) → download MIDI and MusicXML. Scans saved locally so you don't pay to rescan.
@@ -82,7 +82,7 @@ brass-reader/
 
 ## Build steps
 - [x] 1. Scaffold Next app, deps, vitest + playwright config, `lib/instruments.ts`, fixtures (hand-write 4 MusicXML fixtures). **Done when:** `npm run build` and `npx vitest run` pass (empty test ok).
-- [ ] 2. `lib/musicxml.ts`, `lib/transpose.ts` + unit tests (trumpet→concert→trombone lands in bass clef, correct key sig, octave in range; round-trip trumpet→concert→trumpet identical pitches). **Done when:** tests pass.
+- [x] 2. `lib/musicxml.ts`, `lib/transpose.ts` + unit tests (trumpet→concert→trombone lands in bass clef, correct key sig, octave in range; round-trip trumpet→concert→trumpet identical pitches). **Done when:** tests pass.
 - [ ] 3. `lib/timeline.ts` + `lib/midi.ts` + tests (ties merge, dotted, tuplets, multi-measure, time sig change; MIDI parses back with @tonejs/midi with correct note count/tempo). **Done when:** tests pass.
 - [ ] 4. `app/api/omr/route.ts`, `lib/omrPrompt.ts`, `lib/omrClient.ts`. Unit-test validation/retry logic with the SDK call injected (plumbing only). **Done when:** tests pass; route returns clear 503 JSON when no key.
 - [ ] 5. `audiveris-server/` Dockerfile + server.py. Try installing Audiveris in this container (GitHub release or apt) and run it on a fixture image; record result in Handoff Notes. **Done when:** works locally, or blocker logged.
