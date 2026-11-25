@@ -248,8 +248,8 @@ describe('score summary and part picking', () => {
     expect(summariseScore(two)).toEqual({
       title: 'Duet', tempo: 96,
       parts: [
-        { index: 0, name: 'Trumpet 1', clef: 'treble', key: '2 flats', time: '3/4', bars: 2, notes: 2 },
-        { index: 1, name: 'Trombone', clef: 'bass', key: 'no sharps or flats', time: '3/4', bars: 2, notes: 1 },
+        { index: 0, name: 'Trumpet 1', clef: 'treble', key: '2 flats', fifths: -2, time: '3/4', bars: 2, notes: 2 },
+        { index: 1, name: 'Trombone', clef: 'bass', key: 'no sharps or flats', fifths: 0, time: '3/4', bars: 2, notes: 1 },
       ],
     });
   });
@@ -298,5 +298,39 @@ describe('opening files safely', () => {
     zip.file('s.musicxml', notationToMusicXml(parseNotation('1: C4:w')).xml);
     const xml = await readMusicXmlFile(await zip.generateAsync({ type: 'uint8array' }), 'ok.mxl');
     expect(validateMusicXml(xml).ok).toBe(true);
+  });
+});
+
+import { rekeyXml, canRekey } from '@/lib/omrNotation';
+
+describe('correcting a miscounted key signature', () => {
+  const body = '\ntime: 4/4\n0: F4:q\n1: B4:q En5:q F#4:q F4:q\n2: B4:h~ B4:q E5:q\n3: r:h. Bb4:q~\n4: B4:q B4:q A4:g E5+B4:h\n5: key=0 B4:w';
+  const conv = (key: string) => notationToMusicXml(parseNotation(`key: ${key}${body}`)).xml;
+  it('re-derives every pitch exactly as if the reader had written the right key', () => {
+    for (const [from, to, fifths] of [['2b', '3b', -3], ['3b', '1#', 1], ['0', '2b', -2], ['2#', '0', 0]] as const) {
+      const fixed = rekeyXml(conv(from), fifths);
+      expect(pitches(fixed), `${from} -> ${to}`).toEqual(pitches(conv(to)));
+      expect(summariseScore(fixed).parts[0].key).toBe(summariseScore(conv(to)).parts[0].key);
+      expect(validateMusicXml(fixed).ok).toBe(true);
+    }
+  });
+  it('printed accidentals, in-bar carry, ties over the barline and a later key change are respected', () => {
+    const p = pitches(rekeyXml(conv('0'), -2));
+    expect(p[0]).toEqual([65]);
+    expect(p[1]).toEqual([70, 76, 66, 66]); // Bb from the key, E natural printed, F# printed and carried
+    expect(p[2]).toEqual([70, 70, 75]);
+    expect(p[3]).toEqual([70]); // printed flat
+    expect(p[4]).toEqual([70, 70, 69, 75, 70]); // tied-in Bb, then the key's Bb; grace A; chord Eb + Bb
+    expect(p[5]).toEqual([71]); // after "key=0" nothing is touched
+  });
+  it('only touches readings made by this app, and can be limited to one part', () => {
+    const foreign = fs.readFileSync(path.join(__dirname, '../fixtures/scale.musicxml'), 'utf8');
+    expect(canRekey(foreign)).toBe(false);
+    expect(rekeyXml(foreign, -3)).toBe(foreign);
+    expect(rekeyXml(conv('0'), 9)).toBe(conv('0'));
+    const two = notationToMusicXml(parseNotation('part: A\nkey: 0\n1: B4:w\npart: B\nclef: bass\nkey: 0\n1: B2:w')).xml;
+    const doc = parseXml(rekeyXml(two, -1, 1));
+    const firsts = partsOf(doc).map((pt) => pitchToMidi(kid(kids(kids(pt, 'measure')[0], 'note')[0], 'pitch')!));
+    expect(firsts).toEqual([71, 46]);
   });
 });

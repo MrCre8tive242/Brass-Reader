@@ -2,7 +2,8 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { callOmr, prepareFiles, getPasscode, setPasscode, OmrError, type OmrFlag } from '@/lib/omrClient';
-import { extractTitle, detectSourceInstrument, summariseScore, extractPart, type ScoreSummary } from '@/lib/musicxml';
+import { extractTitle, detectSourceInstrument, summariseScore, extractPart, keyName, type ScoreSummary } from '@/lib/musicxml';
+import { canRekey, rekeyXml } from '@/lib/omrNotation';
 import { newId, saveScore } from '@/lib/library';
 import { INSTRUMENT_IDS, INSTRUMENTS, type InstrumentId } from '@/lib/instruments';
 import { AlertIcon, CameraIcon, CheckIcon, CloseIcon, FileIcon, RotateIcon } from './Icons';
@@ -271,7 +272,19 @@ export default function Uploader() {
             <div><dt>Time</dt><dd>{shown.time || 'not found'}</dd></div>
             <div><dt>Bars</dt><dd>{shown.bars}</dd></div>
           </dl>
-          <p className="muted small">Compare these with the top of your page. If the clef, key or time is wrong, every note will be off: read it again.</p>
+          <p className="muted small">Compare these with the top of your page. If the clef or time is wrong, every note will be off: read it again.</p>
+          {canRekey(review.xml) && shown.fifths !== null && (
+            <label className="picker-one">
+              <span className="muted small">Key signature not what your page shows? Choose the right one and the notes are corrected, no new scan needed.</span>
+              <select className="sel" aria-label="Key signature" value={shown.fifths}
+                onChange={(e) => {
+                  const xml = rekeyXml(review.xml, Number(e.target.value), review.part === 'all' ? undefined : review.part);
+                  setReview({ ...review, xml, summary: summariseScore(xml) });
+                }}>
+                {Array.from({ length: 15 }, (_, i) => i - 7).map((f) => <option key={f} value={f}>{keyName(f)}</option>)}
+              </select>
+            </label>
+          )}
           {mismatch && <p className="warnline"><AlertIcon size={18} /> {mismatch}</p>}
           {thin && <p className="warnline"><AlertIcon size={18} /> Very little music was found. Make sure the photo is sharp and shows the whole page.</p>}
           {review.warnings.length > 0 ? (

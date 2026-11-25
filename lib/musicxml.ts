@@ -214,6 +214,8 @@ export interface PartSummary {
   clef: string;
   /** e.g. "2 flats", "1 sharp", "no sharps or flats". */
   key: string;
+  /** The opening key signature as a number (-7 flats .. 7 sharps), or null if none is written. */
+  fifths: number | null;
   /** e.g. "4/4". */
   time: string;
   bars: number;
@@ -239,6 +241,7 @@ export function summariseScore(xml: string): ScoreSummary {
   if (list) for (const sp of kids(list, 'score-part')) names.set(sp.getAttribute('id') ?? '', kidText(sp, 'part-name') ?? '');
   partsOf(doc).forEach((part, index) => {
     let clef = '', key = '', time = '', notes = 0;
+    let fifths: number | null = null;
     const measures = kids(part, 'measure');
     for (const m of measures) {
       for (const el of kids(m)) {
@@ -246,7 +249,7 @@ export function summariseScore(xml: string): ScoreSummary {
           const c = kid(el, 'clef');
           if (c && !clef) clef = CLEF_NAMES[`${kidText(c, 'sign')}${kidText(c, 'line') ?? ''}`] ?? (kidText(c, 'sign') === 'G' ? 'treble' : kidText(c, 'sign') === 'F' ? 'bass' : '');
           const k = kid(el, 'key');
-          if (k && !key) key = keyName(kidNum(k, 'fifths') ?? 0);
+          if (k && !key) { fifths = kidNum(k, 'fifths') ?? 0; key = keyName(fifths); }
           const t = kid(el, 'time');
           if (t && !time && kidText(t, 'beats')) time = `${kidText(t, 'beats')}/${kidText(t, 'beat-type')}`;
         } else if (el.nodeName === 'note') { if (kid(el, 'pitch')) notes++; }
@@ -259,7 +262,7 @@ export function summariseScore(xml: string): ScoreSummary {
     }
     const raw = (names.get(part.getAttribute('id') ?? '') ?? '').trim();
     const name = !raw || /^(part|music|musicxml part|voice)$/i.test(raw) ? `Part ${index + 1}` : raw;
-    out.parts.push({ index, name, clef, key, time, bars: measures.length, notes });
+    out.parts.push({ index, name, clef, key, fifths, time, bars: measures.length, notes });
   });
   return out;
 }

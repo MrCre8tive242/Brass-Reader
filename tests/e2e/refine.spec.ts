@@ -150,6 +150,12 @@ test('review step: facts, things to check, part choice, hints sent, read again, 
   await page.getByRole('button', { name: 'Read again' }).click();
   await expect(page.getByTestId('review-ok')).toBeVisible({ timeout: 30_000 });
   expect(seen).toHaveLength(2);
+  // the key signature can be corrected without another scan: 2 flats -> 3 flats
+  await page.getByLabel('Your part').selectOption('0');
+  await expect(page.getByLabel('Key signature')).toHaveValue('-2');
+  await page.getByLabel('Key signature').selectOption('-3');
+  await expect(page.getByTestId('review-facts')).toHaveText(/Key\s*3 flats/);
+  expect(seen).toHaveLength(2); // no extra scan
   await page.getByLabel('Title').fill('Parade Tune (my part)');
   await page.getByRole('button', { name: 'Open score' }).click();
   await page.waitForURL(/\/score\//);
@@ -158,6 +164,10 @@ test('review step: facts, things to check, part choice, hints sent, read again, 
   // first part by default after a re-read; the picker switches to the trombone line
   await expect(page.getByLabel('Part')).toHaveValue('0');
   await expect(page.getByTestId('bar-counter')).toHaveText('Bar 1 / 4');
+  // the corrected key is what was saved: the downloaded part is in 3 flats (Bb trumpet part shown as written)
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download MusicXML' }).click()]);
+  const saved = (await import('node:fs')).readFileSync(await dl.path(), 'utf8');
+  expect(saved).toContain('<fifths>-3</fifths>');
   // the reader's own doubt is listed and marked on the score
   await expect(page.getByTestId('bar-warnings')).toContainText('1 bar to check');
   await expect(page.getByTestId('bar-flag')).toHaveCount(1);

@@ -19,6 +19,8 @@
  *   ? 2: second note may be B4 or Bb4 (smudged)
  */
 
+import { parseXml, serializeXml, partsOf, kids, kid, kidText, kidNum } from './musicxml';
+
 export type Acc = '' | '#' | 'b' | 'n' | 'x' | 'bb';
 export interface NPitch { step: string; acc: Acc; octave: number }
 export interface NItem {
@@ -64,6 +66,8 @@ export interface NScore {
   problems: string[];
 }
 
+/** Written into the MusicXML so the app knows that <accidental> marks exactly the signs printed on the page. */
+export const SOFTWARE = 'Brass Reader';
 export const DIV = 5040; // divisions per quarter: every value down to dotted 32nds and 3/5/6/7-tuplets is an integer
 
 const TYPES: Record<string, [number, string]> = {
@@ -363,6 +367,7 @@ export function notationToMusicXml(score: NScore): ConvertResult {
 
   let out = '<?xml version="1.0" encoding="UTF-8"?>\n<score-partwise version="4.0">';
   if (score.title) out += `<work><work-title>${esc(score.title)}</work-title></work>`;
+  out += `<identification><encoding><software>${SOFTWARE}</software></encoding></identification>`;
   out += '<part-list>';
   score.parts.forEach((p, i) => { out += `<score-part id="P${i + 1}"><part-name>${esc(p.name || (score.parts.length > 1 ? `Part ${i + 1}` : 'Part'))}</part-name></score-part>`; });
   out += '</part-list>';
@@ -512,4 +517,63 @@ export function mergeCorrections(base: NScore, fixText: string): number {
 
 function headerSeen(text: string): { time: boolean; key: boolean; clef: boolean } {
   return { time: /^\s*time\s*[:=]/im.test(text), key: /^\s*key\s*[:=]/im.test(text), clef: /^\s*clef\s*[:=]/im.test(text) };
+}
+
+// ---------------------------------------------------------------- key signature correction
+
+/** True if this MusicXML was built by `notationToMusicXml` (so its key signature can be corrected safely). */
+export function canRekey(xml: string): boolean {
+  return xml.includes(`<software>${SOFTWARE}</software>`);
+}
+
+/**
+ * Change the opening key signature of a reading and re-derive every pitch from it, as if the reader had counted
+ * the sharps or flats correctly: notes with a printed accidental keep it, an accidental still lasts to the end
+ * of its bar, tied notes keep their pitch, and everything else follows the new key. Sections after a later
+ * key change inside the piece are left alone. `part` limits the change to one part (0-based).
+ */
+export function rekeyXml(xml: string, fifths: number, part?: number): string {
+  if (!canRekey(xml) || !Number.isInteger(fifths) || fifths < -7 || fifths > 7) return xml;
+  const doc = parseXml(xml);
+  partsOf(doc).forEach((p, pi) => {
+    if (part !== undefined && pi !== part) return;
+    let first = true;
+    let active = true; // false once a later key change is reached
+    let prevTied = new Map<string, number>(); // ties started by the previous note (or chord)
+    let curTied = new Map<string, number>(); // ties started by the note (or chord) being read
+    for (const m of kids(p, 'measure')) {
+      const state = new Map<string, number>();
+      for (const el of kids(m)) {
+        if (el.nodeName === 'attributes') {
+          const k = kid(el, 'key');
+          if (k && first) { const f = kid(k, 'fifths'); if (f) f.textContent = String(fifths); first = false; }
+          else if (k) active = false;
+          continue;
+        }
+        if (el.nodeName !== 'note' || !active) continue;
+        const grace = !!kid(el, 'grace');
+        if (!grace && !kid(el, 'chord')) { prevTied = curTied; curTied = new Map(); }
+        const pitch = kid(el, 'pitch');
+        if (!pitch) continue;
+        const step = kidText(pitch, 'step') ?? 'C';
+        const id = `${step}${kidText(pitch, 'octave')}`;
+        const printed = kidText(el, 'accidental');
+        const ties = kids(el, 'tie').map((t) => t.getAttribute('type'));
+        let alter: number;
+        if (printed) {
+          const sym = Object.keys(ACC_NAME).find((k) => ACC_NAME[k] === printed);
+          alter = sym ? ACC_ALTER[sym] : kidNum(pitch, 'alter') ?? 0;
+          state.set(id, alter);
+        } else if (!grace && ties.includes('stop') && prevTied.has(id) && !state.has(id)) alter = prevTied.get(id)!;
+        else alter = state.get(id) ?? keyAlter(fifths, step);
+        const a = kid(pitch, 'alter');
+        if (alter) {
+          if (a) a.textContent = String(alter);
+          else { const n = doc.createElement('alter'); n.textContent = String(alter); pitch.insertBefore(n, kid(pitch, 'octave')); }
+        } else if (a) pitch.removeChild(a);
+        if (!grace && ties.includes('start')) curTied.set(id, alter);
+      }
+    }
+  });
+  return serializeXml(doc);
 }
