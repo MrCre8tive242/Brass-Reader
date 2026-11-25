@@ -3,8 +3,8 @@
 ## STATUS
 Phase: BUILD
 Next model: Sonnet (build agents) → test agents → fixer → Fable (high) refine
-Last updated by: Opus (plan)
-Current step: 8
+Last updated by: Sonnet (build agent)
+Current step: DONE (steps 1-4, 6-8; step 5 owned by another agent)
 
 ## Goal
 Mobile-first web app for a brass player (Junkanoo-style brass/drum group). Upload a photo or PDF of sheet music → app reads it into MusicXML → shows the score with a moving playback cursor + highlighted current bar → play/pause/prev bar/next bar/tap-bar-to-seek → set BPM → switch instrument (trumpet, mellophone, baritone, trombone, sousaphone), which changes BOTH the sound and the written part (transposition + clef) → download MIDI and MusicXML. Scans saved locally so you don't pay to rescan.
@@ -88,7 +88,7 @@ brass-reader/
 - [ ] 5. `audiveris-server/` Dockerfile + server.py. Try installing Audiveris in this container (GitHub release or apt) and run it on a fixture image; record result in Handoff Notes. **Done when:** works locally, or blocker logged.
 - [x] 6. `lib/player.ts` + `components/ScoreView.tsx` + `Transport.tsx` + `InstrumentPicker.tsx` + `Downloads.tsx` + pages + `lib/library.ts`. **Done when:** `npm run build` passes; in dev, opening a fixture plays, cursor moves, pause/seek/BPM/instrument switch work (verify with a Playwright smoke test).
 - [x] 7. `components/Uploader.tsx` end to end (images + PDF + MusicXML upload → saved in library → opens player). **Done when:** e2e test uploading fixture .musicxml and a fixture PDF (OMR route stubbed only in this test) passes.
-- [ ] 8. README (setup, env vars, Vercel steps, Audiveris deploy), vercel.json. **Done when:** written.
+- [x] 8. README (setup, env vars, Vercel steps, Audiveris deploy), vercel.json. **Done when:** written.
 
 ## Test phase (agents after build)
 - Unit + e2e full run; mobile viewport screenshots (375×812, landscape); check cursor sync drift < 1 beat over 32 bars at 60/100/180 BPM; instrument switch re-renders correct clef/key; MIDI opens and matches; accessibility basics; console errors = 0.
@@ -102,7 +102,30 @@ Don't change stack, file tree or interfaces. If something is impossible, log it 
 Env notes: Chromium + Playwright are preinstalled — don't run `playwright install`; if the project pins @playwright/test, launch with `executablePath: '/opt/pw-browsers/chromium'`; pass `--trace off`.
 
 ## Handoff Notes
-(builders write here)
+Build agent (steps 1,2,3,4,6,7,8; step 5 / audiveris-server left to another agent and not touched).
+Tests: 48 vitest unit tests pass; 9 Playwright e2e tests pass (player.spec 3, upload.spec 6); `npm run build` passes.
+
+Deviations / decisions:
+- `<transpose>` is written into the displayed part for transposing instruments (trumpet, mellophone) and OSMD ignores it for display (verified). Auto-octave shifts both written and SOUNDING pitch (sousaphone plays trumpet music 2 octaves down); timeline reads sounding pitch from `<transpose>`.
+- `toConcert` honours an existing `<transpose>` in the source file (and strips it) instead of the assumed "Written for" instrument.
+- Written `<accidental>` elements are removed on transposed notes; OSMD recomputes accidentals (visually verified: sharp/natural appear correctly).
+- autoOctave: maximise notes in range, tie-break smallest |shift|, then median closest to range centre.
+- Player has an oscillator synth placeholder from construction, swapped for smplr Soundfont (MusyngKite) once loaded; load failure/timeout (12 s) keeps the synth. Samples did load from the CDN in this sandbox ("Sound: ... samples" shown).
+- BPM change while playing re-anchors and re-schedules (notes already sounding are cut briefly). Count-in is one bar of clicks.
+- Audiveris token env is `OMR_TOKEN` (matches audiveris-server/server.py), not AUDIVERIS_TOKEN.
+- No `fallbacks`/refusal-fallback parameter on the Claude call (plan fixes model/env); a `refusal` stop reason is surfaced as an error and triggers the Audiveris fallback if configured.
+- vitest config is `vitest.config.mts`; tsconfig `include` was auto-extended by Next.
+- Score is drawn on a paper card; dark mode inverts the OSMD SVG with a CSS filter (cursor/bar highlight are unaffected siblings).
+
+NOT TESTED:
+- Real Claude OMR (no ANTHROPIC_API_KEY): only plumbing with the SDK call injected. `callClaude` in app/api/omr/route.ts (streaming, 64000 max_tokens, no thinking param) has never hit the API. The OMR prompt is unvalidated against real scans.
+- Audiveris fallback over HTTP (only the request shape in route.ts, matched to server.py by reading it).
+- Real iPhone camera `capture` input; landscape layout; cursor drift measurement; long scores.
+- Tap-to-seek is only smoke tested (click far right of bar 2 changes the bar).
+- Repeats are ignored; multi-part scores not tested in UI.
+
+Files most needing review: lib/transpose.ts (spelling/key wrap edge cases), lib/player.ts (scheduling, count-in, restart on BPM change), components/ScoreView.tsx (OSMD cursor stepping, measure boxes, auto-scroll heuristics), app/api/omr/route.ts + lib/omrPrompt.ts (never run live), lib/omrClient.ts (pdfjs worker via `new URL(..., import.meta.url)` works in dev; production build compiles but only dev was exercised in e2e).
+Known UI issue: transport takes 3 rows at 375px (Count-in checkbox wraps); consider compacting.
 
 ## Refinement Log
 (refiner writes here)

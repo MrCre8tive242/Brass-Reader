@@ -39,7 +39,7 @@ async function callClaude(images: string[], retry?: { previous: string; error: s
 async function callAudiveris(images: string[]): Promise<{ musicxml: string; warnings?: string[] }> {
   const base = process.env.AUDIVERIS_URL!.replace(/\/+$/, '');
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (process.env.AUDIVERIS_TOKEN) headers['X-OMR-Token'] = process.env.AUDIVERIS_TOKEN;
+  if (process.env.OMR_TOKEN) headers['X-OMR-Token'] = process.env.OMR_TOKEN;
   const res = await fetch(`${base}/omr`, { method: 'POST', headers, body: JSON.stringify({ images }) });
   const json = (await res.json().catch(() => ({}))) as { musicxml?: string; warnings?: string[]; error?: string };
   if (!res.ok || !json.musicxml) throw new Error(json.error || `HTTP ${res.status}`);
