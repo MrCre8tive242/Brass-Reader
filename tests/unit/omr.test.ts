@@ -1,0 +1,92 @@
+import { describe, it, expect, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { runOmr, validateImages, type OmrDeps } from '@/lib/omrCore';
+import { extractXml } from '@/lib/omrPrompt';
+
+const good = fs.readFileSync(path.join(__dirname, '../fixtures/scale.musicxml'), 'utf8');
+const img = 'data:image/jpeg;base64,AAAA';
+
+function deps(over: Partial<OmrDeps> = {}): OmrDeps {
+  return {
+    hasClaudeKey: true,
+    hasAudiveris: false,
+    callClaude: vi.fn(async () => good),
+    callAudiveris: vi.fn(async () => ({ musicxml: good })),
+    ...over,
+  };
+}
+
+describe('extractXml', () => {
+  it('strips fences and chatter', () => {
+    expect(extractXml('Here you go:\n```xml\n' + good + '\n```\nDone')).toBe(extractXml(good));
+    expect(extractXml('blah ' + good + ' trailing').startsWith('<?xml')).toBe(true);
+    expect(extractXml(good).endsWith('</score-partwise>')).toBe(true);
+  });
+});
+
+describe('validateImages', () => {
+  it('accepts data urls and rejects junk', () => {
+    expect(validateImages([img])).toBeNull();
+    expect(validateImages([])).toMatch(/at least one/);
+    expect(validateImages(['http://x/y.png'])).toMatch(/data URLs/);
+    expect(validateImages(Array(7).fill(img))).toMatch(/Too many/);
+    expect(validateImages(['data:image/png;base64,' + 'A'.repeat(4_100_000)])).toMatch(/too large/);
+  });
+});
+
+describe('runOmr', () => {
+  it('returns 503 with a clear message when no key and no audiveris', async () => {
+    const r = await runOmr([img], 'auto', deps({ hasClaudeKey: false }));
+    expect(r).toMatchObject({ ok: false, status: 503, code: 'no_key' });
+    expect((r as { error: string }).error).toContain('ANTHROPIC_API_KEY');
+  });
+  it('explicit claude without key is 503', async () => {
+    expect(await runOmr([img], 'claude', deps({ hasClaudeKey: false, hasAudiveris: true }))).toMatchObject({ status: 503 });
+  });
+  it('explicit audiveris without URL is 503', async () => {
+    expect(await runOmr([img], 'audiveris', deps())).toMatchObject({ status: 503, code: 'no_audiveris' });
+  });
+  it('happy path uses claude once', async () => {
+    const d = deps();
+    const r = await runOmr([img], 'auto', d);
+    expect(r).toMatchObject({ ok: true, engine: 'claude' });
+    expect(d.callClaude).toHaveBeenCalledTimes(1);
+  });
+  it('retries once with the parse error, then succeeds', async () => {
+    const calls: unknown[] = [];
+    const d = deps({
+      callClaude: vi.fn(async (_i, retry) => { calls.push(retry); return retry ? good : '<score-partwise><oops'; }),
+    });
+    const r = await runOmr([img], 'auto', d);
+    expect(r).toMatchObject({ ok: true, engine: 'claude' });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toMatchObject({ previous: '<score-partwise><oops' });
+    expect((calls[1] as { error: string }).error).toMatch(/XML|Not MusicXML/);
+  });
+  it('falls back to audiveris when claude keeps failing', async () => {
+    const d = deps({ hasAudiveris: true, callClaude: vi.fn(async () => 'garbage') });
+    const r = await runOmr([img], 'auto', d);
+    expect(d.callClaude).toHaveBeenCalledTimes(2);
+    expect(r).toMatchObject({ ok: true, engine: 'audiveris' });
+    expect((r as { warnings: string[] }).warnings[0]).toMatch(/Claude/);
+  });
+  it('falls back when claude throws', async () => {
+    const d = deps({ hasAudiveris: true, callClaude: vi.fn(async () => { throw new Error('529 overloaded'); }) });
+    expect(await runOmr([img], 'auto', d)).toMatchObject({ ok: true, engine: 'audiveris' });
+  });
+  it('502 when claude fails and there is no fallback', async () => {
+    const d = deps({ callClaude: vi.fn(async () => '<x/>') });
+    expect(await runOmr([img], 'auto', d)).toMatchObject({ ok: false, status: 502, code: 'reader_failed' });
+  });
+  it('rejects audiveris output that is not a score', async () => {
+    const d = deps({ hasAudiveris: true, hasClaudeKey: false, callAudiveris: vi.fn(async () => ({ musicxml: '<score-partwise/>' })) });
+    expect(await runOmr([img], 'audiveris', d)).toMatchObject({ ok: false, status: 502 });
+  });
+  it('uses audiveris directly when no key but URL set', async () => {
+    const d = deps({ hasClaudeKey: false, hasAudiveris: true });
+    const r = await runOmr([img], 'auto', d);
+    expect(r).toMatchObject({ ok: true, engine: 'audiveris' });
+    expect(d.callClaude).not.toHaveBeenCalled();
+  });
+});
