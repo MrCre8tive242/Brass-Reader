@@ -175,7 +175,7 @@ export class Player {
     this.clickBus = ctx.createGain();
     this.clickBus.gain.value = 0.5;
     this.clickBus.connect(ctx.destination);
-    this.drums = new DrumBus(ctx, ctx.destination);
+    this.drums = new DrumBus(ctx, ctx.destination, true);
     this.voice = new SynthVoice(ctx, this.master); // placeholder until samples arrive
     // a phone call, Siri or the lock screen suspends the audio clock: stop cleanly instead of freezing mid-bar
     try {

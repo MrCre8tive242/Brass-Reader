@@ -79,4 +79,4 @@ NOT TESTED
 - Fingering charts: checked against the standard Bb trumpet chart and trombone positions by the unit tests written from the same rules; a brass teacher should look at the alternates (they are mechanical: other open harmonics within 6 semitones, plus 3 for 1-2) and at baritone/sousaphone low notes.
 - Loop plus repeats/endings (loop follows the first time each bar is played); loop on multi-part scores with different repeat structures per part.
 - Long scores with marks/fingerings switched on (the 160-bar performance test runs with both off).
-- Feature D (drums) not built.
+- Feature D (drums): built afterwards, see DRUMS_PLAN.md Handoff Notes.

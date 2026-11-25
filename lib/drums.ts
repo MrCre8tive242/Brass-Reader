@@ -109,11 +109,11 @@ export class DrumBus {
   readonly log: DrumLogEntry[] = [];
   private active = new Set<AudioScheduledSourceNode>();
 
-  constructor(private ctx: BaseAudioContext, dest: AudioNode) {
+  constructor(private ctx: BaseAudioContext, dest: AudioNode, expose = false) {
     this.out = ctx.createGain();
     this.out.gain.value = 0.8;
     this.out.connect(dest);
-    if (typeof window !== 'undefined') (window as unknown as { __brDrumLog?: DrumLogEntry[] }).__brDrumLog = this.log;
+    if (expose && typeof window !== 'undefined') (window as unknown as { __brDrumLog?: DrumLogEntry[] }).__brDrumLog = this.log;
   }
 
   setVolume(v: number) { this.out.gain.value = Math.max(0, Math.min(1, v)) * 0.9; }

@@ -271,3 +271,103 @@ describe('unlockAudio', () => {
     expect(new Set(w.slice(44))).toEqual(new Set([128]));
   });
 });
+
+// ---- the drums ride on the same clock ----
+import { buildDrumEvents, starterGroove } from '@/lib/groove';
+
+describe('Player drums', () => {
+  beforeEach(() => { vi.stubGlobal('requestAnimationFrame', () => 1); vi.stubGlobal('cancelAnimationFrame', () => {}); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  function setup(text = 'time: 4/4\n1: C5:w\n2: C5:w\n3: C5:w\n4: C5:w') {
+    const ctx = fakeCtx();
+    const p = new Player(ctx);
+    (p as unknown as { voice: unknown }).voice = { start() {}, stop() {} };
+    const tl = tlOf(text);
+    p.setTimeline(tl);
+    const hits: { q: number; when: number; bpm: number }[] = [];
+    p.drums.hit = (h, when, _spq, bpm) => { hits.push({ q: h.timeQ, when, bpm }); };
+    p.setDrums(buildDrumEvents(tl, starterGroove('starter-a')!), null);
+    p.setDrumsEnabled(true);
+    const tick = () => (p as unknown as { tick(): void }).tick();
+    /** Run the clock forward to `to` seconds in 0.1 s steps, scheduling as the timer would. */
+    const run = (to: number) => { while (ctx.currentTime < to - 1e-9) { ctx.currentTime = Math.min(to, ctx.currentTime + 0.1); tick(); } };
+    return { ctx, p, hits, tick, run, tl };
+  }
+
+  it('hits land on the beat grid at the tempo, and start on the downbeat of bar 1', async () => {
+    const { p, hits, run } = setup();
+    p.setBpm(120);
+    await p.play();
+    run(3);
+    expect(hits[0].q).toBe(0);
+    expect(hits[0].when).toBeCloseTo(0.06, 3);
+    for (const h of hits) expect(h.when).toBeCloseTo(0.06 + (h.q * 60) / 120, 3);
+    expect(hits.at(-1)!.q).toBeGreaterThan(5);
+    p.dispose();
+  });
+
+  it('waits for the count-in and plays nothing before bar 1', async () => {
+    const { p, hits, run } = setup();
+    p.setBpm(60);
+    p.countIn = true;
+    await p.play();
+    run(3.7);
+    expect(hits).toHaveLength(0);
+    run(4.1);
+    expect(hits[0].q).toBe(0);
+    expect(hits[0].when).toBeCloseTo(4.06, 3);
+    p.dispose();
+  });
+
+  it('follows a tempo change: the later hits are on the new grid', async () => {
+    const { p, hits, run } = setup();
+    p.setBpm(60);
+    await p.play();
+    run(2.06);
+    p.setBpm(120);
+    hits.length = 0;
+    run(3);
+    expect(hits.length).toBeGreaterThan(0);
+    // position was q=2 at t=2.06; at 120 BPM a hit at q lands at 2.06 + (q-2)/2
+    for (const h of hits) expect(h.when).toBeCloseTo(2.06 + (h.q - 2) / 2, 2);
+    p.dispose();
+  });
+
+  it('seeking moves the drums with the score', async () => {
+    const { p, hits, run } = setup();
+    p.setBpm(60);
+    await p.play();
+    hits.length = 0;
+    p.seek(3);
+    run(0.5);
+    expect(hits[0].q).toBe(8); // bar 3 starts at quarter 8
+    p.dispose();
+  });
+
+  it('a loop brings the groove back to the loop start at every pass, with no gap', async () => {
+    const { p, hits, run } = setup();
+    p.setBpm(60);
+    p.setLoop({ startQ: 4, endQ: 8 });
+    await p.play(2);
+    run(14);
+    const downbeats = [...new Set(hits.filter((h) => h.q === 4).map((h) => Math.round(h.when * 1000) / 1000))];
+    expect(downbeats.length).toBeGreaterThanOrEqual(3);
+    for (let i = 1; i < downbeats.length; i++) expect(downbeats[i] - downbeats[i - 1]).toBeCloseTo(4, 2);
+    p.dispose();
+  });
+
+  it('off means silent but keeps the place', async () => {
+    const { p, hits, run } = setup();
+    p.setDrumsEnabled(false);
+    p.setBpm(60);
+    await p.play();
+    run(2);
+    expect(hits).toHaveLength(0);
+    p.setDrumsEnabled(true);
+    run(3);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(Math.min(...hits.map((h) => h.q))).toBeGreaterThan(2);
+    p.dispose();
+  });
+});

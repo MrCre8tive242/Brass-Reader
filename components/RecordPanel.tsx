@@ -18,11 +18,13 @@ interface Props {
   playing: boolean;
   /** Set the tempo shown in the transport (a take is replayed at the tempo it was made at). */
   onTempo: (bpm: number) => void;
+  /** True while recording is armed or a take is being replayed (the drums may be set to stay out of those). */
+  onBusy?: (busy: boolean) => void;
 }
 
 const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
 
-export default function RecordPanel({ scoreId, title, getPlayer, session, playing, onTempo }: Props) {
+export default function RecordPanel({ scoreId, title, getPlayer, session, playing, onTempo, onBusy }: Props) {
   const [armed, setArmed] = useState(false);
   const [recording, setRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +36,8 @@ export default function RecordPanel({ scoreId, title, getPlayer, session, playin
   armedRef.current = armed;
   const audio = useRef<HTMLAudioElement | null>(null);
   const audioUrl = useRef<string | null>(null);
+
+  useEffect(() => { onBusy?.(armed || playingId !== null); }, [armed, playingId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refresh = useCallback(() => { listTakes(scoreId).then(setTakes).catch(() => setTakes([])); }, [scoreId]);
   useEffect(refresh, [refresh]);

@@ -4,6 +4,7 @@ import type { LoopRange, Trainer } from './loop';
 import type { SongPart } from './song';
 import type { OctaveShift } from './range';
 import type { MixState } from './mixer';
+import type { DrumSettings } from './drumSettings';
 import { deleteTakesOf } from './takes';
 
 export interface SavedScore {
@@ -34,6 +35,8 @@ export interface SavedScore {
   /** Passages moved an octave to fit the instrument's range (applied on top of the reading; undo any time). */
   octaveShifts?: OctaveShift[];
   trainer?: Trainer;
+  /** Drums under this score (chosen groove, volume, feel). */
+  drums?: DrumSettings;
 }
 
 const PREFIX = 'score:';

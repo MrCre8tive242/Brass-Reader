@@ -30,6 +30,9 @@ import PracticeSheet, { Section } from '@/components/PracticeSheet';
 import LoopPanel from '@/components/LoopPanel';
 import DrumsPanel from '@/components/DrumsPanel';
 import GrooveStudio from '@/components/GrooveStudio';
+import { DEFAULT_DRUMS, drumsAudible, feelFor, normalizeDrums, type DrumSettings } from '@/lib/drumSettings';
+import { buildDrumEvents, starterGrooves, type Groove } from '@/lib/groove';
+import { getGroove, listGrooves } from '@/lib/grooveStore';
 import { LoopIcon } from '@/components/Icons';
 import { DEFAULT_TRAINER, loopQ, normalizeLoop, normalizeTrainer, passLabel, type LoopRange, type Trainer } from '@/lib/loop';
 
@@ -76,6 +79,10 @@ export default function ScorePage() {
   const [pitchResults, setPitchResults] = useState<(NoteResult | undefined)[]>([]);
   const [checksOpen, setChecksOpen] = useState(false);
   const [studioOpen, setStudioOpen] = useState(false);
+  const [drums, setDrums] = useState<DrumSettings>(DEFAULT_DRUMS);
+  const [saved, setSaved] = useState<Groove[]>([]);
+  const [drumBuf, setDrumBuf] = useState<{ id: string; buffer: AudioBuffer | null; failed?: boolean } | null>(null);
+  const [recBusy, setRecBusy] = useState(false);
   const player = useRef<Player | null>(null);
   const view = useRef<ScoreViewHandle>(null);
   const measureRef = useRef(1);
@@ -112,6 +119,7 @@ export default function ScorePage() {
         setShifts(s.octaveShifts ?? []);
         if (s.loop) setLoopDraft(s.loop);
         setTrainer(normalizeTrainer(s.trainer));
+        setDrums(normalizeDrums(s.drums));
       }
     }).catch(() => alive && setScore(null));
     return () => { alive = false; };
@@ -254,6 +262,43 @@ export default function ScorePage() {
   const changeCountIn = useCallback((v: boolean) => { setCountIn(v); lsSet('brass-reader:countin', v ? '1' : '0'); }, []);
 
   const tlNow = derived?.tl ?? null;
+
+  // ---- drums: the chosen groove becomes hits on the score's beat grid, played by the player's clock ----
+  const refreshGrooves = useCallback(() => {
+    listGrooves().then((l) => setSaved(l.map(({ audio, ...g }) => { void audio; return g; }))).catch(() => setSaved([]));
+  }, []);
+  useEffect(refreshGrooves, [refreshGrooves]);
+  const allGrooves = useMemo(() => [...saved, ...starterGrooves()], [saved]);
+  const groove = allGrooves.find((g) => g.id === drums.grooveId);
+  const grooveKey = groove ? `${groove.id}:${groove.kind}:${groove.bpm ?? ''}:${groove.quantize ?? ''}:${groove.bars ?? ''}:${groove.feel}:${groove.slices?.length ?? ''}` : '';
+  // a recorded groove's sound: decode its audio once per change
+  useEffect(() => {
+    let alive = true;
+    const g = groove;
+    if (!g || g.kind !== 'recorded') { setDrumBuf(null); return; }
+    const ctx = player.current?.context;
+    setDrumBuf({ id: g.id, buffer: null });
+    getGroove(g.id).then(async (st) => {
+      if (!st?.audio || !ctx) throw new Error('no audio');
+      const buffer = await ctx.decodeAudioData(await st.audio.arrayBuffer());
+      if (alive) setDrumBuf({ id: g.id, buffer });
+    }).catch(() => { if (alive) setDrumBuf({ id: g.id, buffer: null, failed: true }); });
+    return () => { alive = false; };
+  }, [grooveKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const drumFeel = groove ? feelFor(drums, groove) : 'straight';
+  const drumEvents = useMemo(() => (groove && tlNow ? buildDrumEvents(tlNow, groove, drumFeel) : []), [groove, tlNow, drumFeel]);
+  const drumStatus = groove?.kind === 'recorded' && drumBuf?.id === groove.id ? (drumBuf.failed ? 'The recording of this groove could not be opened, so it is silent.' : drumBuf.buffer ? null : 'Loading the recording…') : null;
+  useEffect(() => {
+    const buffer = groove && drumBuf?.id === groove.id ? drumBuf.buffer : null;
+    player.current?.setDrums(drumEvents, groove ? { groove, buffer } : null);
+  }, [drumEvents, groove, drumBuf]);
+  useEffect(() => {
+    player.current?.setDrumsEnabled(drumsAudible(drums, groove, recBusy));
+    player.current?.setDrumsVolume(drums.volume);
+  }, [drums, groove, recBusy, derived]);
+  const changeDrums = useCallback((patch: Partial<DrumSettings>) => {
+    setDrums((d) => { const next = normalizeDrums({ ...d, ...patch }); void updateScore(id, { drums: next }); return next; });
+  }, [id]);
   // the notes of my part at their sounding pitch: what the pitch check listens for
   const myNotes = useMemo(() => (tlNow ? tlNow.events.filter((e) => e.part === undefined || e.part === myIdx).map((e) => ({ timeQ: e.timeQ, durQ: e.durQ, midi: e.midi, measure: e.measure })) : []), [tlNow, myIdx]);
   const pitchMarks = useMemo<NoteMark[]>(() => {
@@ -483,7 +528,7 @@ export default function ScorePage() {
         <p className="disclaimer">Reading is automatic and can make mistakes. Check the notes against your sheet.</p>
         <Downloads
           title={score.title}
-          getMidi={() => toMidi(derived!.tl!, bpm, INSTRUMENTS[target].program, score.title, parts.map((p, i) => ({ name: p.name, program: INSTRUMENTS[i === myIdx ? target : p.instrument].program })))}
+          getMidi={() => toMidi(derived!.tl!, bpm, INSTRUMENTS[target].program, score.title, parts.map((p, i) => ({ name: p.name, program: INSTRUMENTS[i === myIdx ? target : p.instrument].program })), drums.inMidi && groove && drums.on ? drumEvents : undefined)}
           getXml={() => derived!.exportXml}
         />
       </main>
@@ -539,16 +584,16 @@ export default function ScorePage() {
           />
         </Section>
         <Section id="record" title="Record yourself">
-          <RecordPanel scoreId={id} title={score.title} getPlayer={getPlayer} session={mic} playing={playing} onTempo={setBpm} />
+          <RecordPanel scoreId={id} title={score.title} getPlayer={getPlayer} session={mic} playing={playing} onTempo={setBpm} onBusy={setRecBusy} />
         </Section>
         <Section id="drums" title="Drums">
-          <DrumsPanel onOpenStudio={() => setStudioOpen(true)} />
+          <DrumsPanel settings={drums} grooves={allGrooves} status={drumStatus} onChange={changeDrums} onOpenStudio={() => setStudioOpen(true)} />
         </Section>
         <Section id="loop" title="Loop and speed trainer" open>
           <LoopPanel measureCount={measureCount} loop={normalizeLoop(loop, measureCount)} draft={loopDraft} trainer={trainer} onDraft={setLoopDraft} onLoop={changeLoop} onTrainer={changeTrainer} />
         </Section>
       </PracticeSheet>
-      {studioOpen && <GrooveStudio getCtx={() => player.current?.context ?? null} clickBpm={bpm} onClose={() => setStudioOpen(false)} onChanged={() => {}} />}
+      {studioOpen && <GrooveStudio getCtx={() => player.current?.context ?? null} clickBpm={bpm} onClose={() => setStudioOpen(false)} onChanged={refreshGrooves} />}
       <Transport
         playing={playing}
         measure={measure}
