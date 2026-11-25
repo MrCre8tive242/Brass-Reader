@@ -46,6 +46,11 @@ async function callAudiveris(images: string[]): Promise<{ musicxml: string; warn
   return { musicxml: json.musicxml, warnings: json.warnings };
 }
 
+/** What this deployment can do (no secrets): lets the UI hide buttons for readers that are not configured. */
+export async function GET() {
+  return NextResponse.json({ claude: !!process.env.ANTHROPIC_API_KEY, audiveris: !!process.env.AUDIVERIS_URL });
+}
+
 export async function POST(req: Request) {
   const len = Number(req.headers.get('content-length') ?? 0);
   if (len > MAX_BODY_BYTES * 1.4) {

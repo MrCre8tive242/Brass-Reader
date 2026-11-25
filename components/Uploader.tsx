@@ -9,6 +9,8 @@ import { INSTRUMENT_IDS, INSTRUMENTS, DEFAULT_SOURCE_INSTRUMENT, type Instrument
 interface Item { key: string; file: File; url: string | null }
 
 let keyCounter = 0;
+/** Errors that happened before the reader ran (or that the free reader cannot fix): no "free reader" retry. */
+const CLIENT_ERRORS = new Set(['client', 'too_large', 'xml', 'no_key', 'bad_request', 'network', 'unauthorized', 'rate_limited']);
 const isMusicXml = (f: File) => /\.(musicxml|xml|mxl)$/i.test(f.name);
 
 function titleFromName(name: string) {
@@ -22,10 +24,14 @@ export default function Uploader() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<{ message: string; code: string } | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [caps, setCaps] = useState<{ audiveris: boolean } | null>(null);
   const xmlInput = useRef<HTMLInputElement>(null);
   const urls = useRef<string[]>([]);
 
   useEffect(() => () => urls.current.forEach((u) => URL.revokeObjectURL(u)), []);
+  useEffect(() => {
+    fetch('/api/omr').then((r) => r.json()).then((j) => setCaps({ audiveris: !!j.audiveris })).catch(() => {});
+  }, []);
 
   async function saveAndOpen(xml: string, fallbackTitle: string, origin: 'scan' | 'musicxml') {
     const t = extractTitle(xml);
@@ -143,7 +149,7 @@ export default function Uploader() {
       {error && (
         <div className="error" role="alert" data-testid="upload-error">
           <p>{error.message}</p>
-          {items.length > 0 && error.code !== 'no_key' && error.code !== 'no_audiveris' && error.code !== 'xml' && (
+          {items.length > 0 && caps?.audiveris && error.code !== 'no_audiveris' && !CLIENT_ERRORS.has(error.code) && (
             <button type="button" className="btn" onClick={() => read('audiveris')}>Try free reader</button>
           )}{' '}
           <button type="button" className="btn" onClick={() => xmlInput.current?.click()}>Open MusicXML instead</button>

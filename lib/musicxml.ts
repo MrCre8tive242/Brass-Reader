@@ -9,11 +9,18 @@ export class MusicXmlError extends Error {}
 
 export function parseXml(xml: string): XDoc {
   const clean = xml.replace(/^﻿/, '').trim();
-  const doc = new DOMParser({
-    onError: (level: string, msg: string) => {
-      if (level === 'error' || level === 'fatalError') throw new MusicXmlError(`XML parse error: ${msg}`);
-    },
-  }).parseFromString(clean, 'text/xml') as unknown as XDoc;
+  let doc: XDoc;
+  try {
+    doc = new DOMParser({
+      onError: (level: string, msg: string) => {
+        if (level === 'error' || level === 'fatalError') throw new MusicXmlError(`XML parse error: ${msg}`);
+      },
+    }).parseFromString(clean, 'text/xml') as unknown as XDoc;
+  } catch (e) {
+    // xmldom wraps errors thrown from onError ("Reporting fatalError ... caused Error: ..."): keep the useful part
+    const m = (e as Error).message.match(/(?:caused Error: )?XML parse error: (.*)$/s);
+    throw new MusicXmlError(m ? `That file is not valid MusicXML (${m[1].trim()}).` : (e as Error).message);
+  }
   const root = doc.documentElement;
   if (!root) throw new MusicXmlError('XML parse error: empty document');
   if (root.nodeName === 'score-timewise') throw new MusicXmlError('score-timewise MusicXML is not supported; export as partwise');

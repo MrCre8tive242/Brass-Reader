@@ -90,3 +90,41 @@ describe('runOmr', () => {
     expect(d.callClaude).not.toHaveBeenCalled();
   });
 });
+
+import { fitToBudget, SHRINK_STEPS, OmrError } from '@/lib/omrClient';
+import { parseXml } from '@/lib/musicxml';
+
+describe('fitToBudget (large PDFs / photos)', () => {
+  // fake encoder: size grows with pixel area and quality
+  const enc = (s: { px: number }, edge: number, q: number) => 'x'.repeat(Math.round((Math.min(edge, s.px) / 2000) ** 2 * q * 700_000));
+  it('keeps full quality when it fits', () => {
+    const out = fitToBudget([{ px: 2000 }, { px: 2000 }], enc, 3_800_000);
+    expect(out.reduce((n, x) => n + x.length, 0)).toBeLessThanOrEqual(3_800_000);
+    expect(out[0].length).toBe(Math.round(0.85 * 700_000));
+  });
+  it('shrinks progressively until six big pages fit', () => {
+    const six = Array.from({ length: 6 }, () => ({ px: 2200 }));
+    const out = fitToBudget(six, enc, 3_800_000);
+    const total = out.reduce((n, x) => n + x.length, 0);
+    expect(total).toBeLessThanOrEqual(3_800_000);
+    expect(total).toBeGreaterThan(1_000_000); // not shrunk more than needed
+    expect(out).toHaveLength(6);
+  });
+  it('gives up with a too_large error that is not a reader failure', () => {
+    try { fitToBudget([{ px: 2000 }], () => 'x'.repeat(5_000_000)); expect.unreachable(); }
+    catch (e) { expect(e).toBeInstanceOf(OmrError); expect((e as OmrError).code).toBe('too_large'); }
+  });
+  it('ladder only goes down', () => {
+    for (let i = 1; i < SHRINK_STEPS.length; i++) {
+      expect(SHRINK_STEPS[i][0]).toBeLessThanOrEqual(SHRINK_STEPS[i - 1][0]);
+      expect(SHRINK_STEPS[i][1]).toBeLessThanOrEqual(SHRINK_STEPS[i - 1][1]);
+    }
+  });
+});
+
+describe('XML parse errors', () => {
+  it('do not leak the xmldom wrapper text', () => {
+    expect(() => parseXml('')).toThrow(/not valid MusicXML/);
+    try { parseXml(''); } catch (e) { expect((e as Error).message).not.toMatch(/Reporting|caused Error/); }
+  });
+});
