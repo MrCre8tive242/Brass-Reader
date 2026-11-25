@@ -4,8 +4,8 @@ import { unlockAudio } from '@/lib/audioUnlock';
 import { micErrorMessage } from '@/lib/pitch';
 import { MAX_RECORD_S, startPcmRecorder, type PcmRecorder } from '@/lib/pcmRecorder';
 import { analyzeRecording, type Analysis } from '@/lib/grooveAnalyze';
-import { bpmFromTaps, buildSlices, encodeWav, loopSeconds } from '@/lib/grooveAnalysis';
-import type { Feel, Groove } from '@/lib/groove';
+import { bpmFromTaps, buildSlices, detectOnsets, encodeWav, loopSeconds, peakLevel, recordingLevel } from '@/lib/grooveAnalysis';
+import { SLICE_VERSION, type Feel, type Groove } from '@/lib/groove';
 import { newId } from '@/lib/library';
 import type { StoredGroove } from '@/lib/grooveStore';
 import { AlertIcon, MicIcon } from './Icons';
@@ -72,7 +72,7 @@ export function GrooveRecorder({ getCtx, clickBpm, onDone, onCancel }: RecordPro
     const { samples, rate } = await r.stop();
     if (samples.length < rate * 1.5) { setError('That was too short to work with. Record at least a couple of seconds of the drums.'); setPhase('idle'); return; }
     try {
-      const analysis = await analyzeRecording(ctx, samples, rate, countInS.current, tempo);
+      const analysis = await analyzeRecording(ctx, samples, rate, { countInS: countInS.current, clickBpm: tempo });
       onDone({ samples, rate, analysis });
     } catch (e) {
       setError(`Could not read the recording: ${(e as Error).message}`);
@@ -94,7 +94,8 @@ export function GrooveRecorder({ getCtx, clickBpm, onDone, onCancel }: RecordPro
     if (countIn) {
       const t0 = ctx.currentTime + 0.15;
       for (let k = 0; k < 4; k++) click(ctx, t0 + k * beat, k === 0);
-      countInS.current = r.elapsed() + (t0 - ctx.currentTime) + 4 * beat;
+      // where bar 1 starts in the recording: the clicks reach the players a little late (the speaker's own delay)
+      countInS.current = r.elapsed() + (t0 - ctx.currentTime) + 4 * beat + (Number.isFinite(ctx.outputLatency) ? ctx.outputLatency : 0);
       setPhase('counting');
       setTimeout(() => { if (phaseRef.current === 'counting') setPhase('recording'); }, (0.15 + 4 * beat) * 1000);
     } else { countInS.current = null; setPhase('recording'); }
@@ -164,11 +165,23 @@ export function GrooveReview({ getCtx, samples, rate, analysis, existing, wav, o
   const taps = useRef<number[]>([]);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
 
-  const slices = useMemo(() => buildSlices(analysis.onsets, dur, down, bpm, bars), [analysis.onsets, dur, down, bpm, bars]);
+  // "More hits" / "Fewer hits" listens again with a finer or coarser ear; until then the hits are the ones found (or saved) before
+  const [sens, setSens] = useState<number | null>(null);
+  const found = useMemo(() => {
+    if (sens === null) return { times: analysis.onsets, starts: analysis.starts };
+    const o = detectOnsets(samples, rate, sens);
+    return { times: o.times, starts: o.starts };
+  }, [sens, analysis.onsets, analysis.starts, samples, rate]);
+  const slices = useMemo(() => buildSlices(found.times, dur, down, bpm, bars, found.starts), [found, dur, down, bpm, bars]);
+  // a quiet phone recording is brought up so the drums sit with the horns (and a clipped one is left alone)
+  const gain = useMemo(() => {
+    const peak = peakLevel(samples, rate, down, down + loopSeconds(bars, bpm));
+    return peak > 0.01 ? Math.round(Math.max(0.5, Math.min(8, 0.9 / peak)) * 100) / 100 : 1;
+  }, [samples, rate, down, bars, bpm]);
   const groove = useMemo<Groove>(() => ({
     id: existing?.id ?? 'preview', name, kind: 'recorded', createdAt: existing?.createdAt ?? Date.now(), bpm, bars, feel, quantize: quant,
-    downbeatS: down, onsets: analysis.onsets, slices, durationS: dur,
-  }), [existing, name, bpm, bars, feel, quant, down, analysis.onsets, slices, dur]);
+    downbeatS: down, onsets: found.times, ...(found.starts ? { onsetStarts: found.starts } : {}), slices, durationS: dur, gain, v: SLICE_VERSION,
+  }), [existing, name, bpm, bars, feel, quant, down, found, slices, dur, gain]);
 
   const buffer = useMemo(() => {
     const ctx = getCtx();
@@ -179,6 +192,7 @@ export function GrooveReview({ getCtx, samples, rate, analysis, existing, wav, o
   }, [getCtx, samples, rate]);
   const preview = useGroovePreview(getCtx);
 
+  const heard = useMemo(() => recordingLevel(samples).verdict, [samples]);
   const barS = loopSeconds(1, bpm);
   const fits = Math.floor(((dur - down) / barS) + 0.12);
   const tooLong = bars > Math.max(1, fits);
@@ -188,6 +202,13 @@ export function GrooveReview({ getCtx, samples, rate, analysis, existing, wav, o
     taps.current = [...taps.current.filter((t) => now - t < 2.5), now];
     const b = bpmFromTaps(taps.current);
     if (b && b >= 30 && b <= 300) setBpm(b);
+  }
+  /** The tempo was heard an octave out (80 for 160 or the other way): fix it and keep the same stretch of the recording as the loop. */
+  function octave(up: boolean) {
+    const b = up ? bpm * 2 : bpm / 2;
+    if (b < 30 || b > 300) return;
+    setBpm(Math.round(b * 10) / 10);
+    setBars((n) => (up ? Math.min(4, n * 2) : Math.max(1, n / 2)));
   }
   const nudge = (ms: number) => setDown((d) => Math.max(0, Math.min(dur, Math.round((d + ms / 1000) * 1000) / 1000)));
 
@@ -203,8 +224,10 @@ export function GrooveReview({ getCtx, samples, rate, analysis, existing, wav, o
     <div className="grec" data-testid="groove-review">
       <RecorderSteps current={2} />
       <h3 className="stephead"><span className="n" aria-hidden>2</span> Check the tempo and the downbeat</h3>
-      {analysis.onsets.length === 0 && <p className="error" role="alert"><AlertIcon size={18} /> No drum hits were found. Move the phone closer, or record again louder.</p>}
-      <Waveform samples={samples} rate={rate} onsets={analysis.onsets} downbeatS={down} loopS={loopSeconds(bars, bpm)} barS={barS} onDownbeat={(s) => setDown(Math.round(s * 1000) / 1000)} />
+      {found.times.length === 0 && <p className="error" role="alert"><AlertIcon size={18} /> No drum hits were found. Move the phone closer, or record again louder.</p>}
+      {heard === 'hot' && <p className="muted small" data-testid="level-note">The drums overloaded the microphone. The groove still works, but it will sound cleaner recorded from a few steps further back.</p>}
+      {heard === 'quiet' && found.times.length > 0 && <p className="muted small" data-testid="level-note">That was very quiet. It has been turned up, but a recording from closer to the drums will sound better.</p>}
+      <Waveform samples={samples} rate={rate} onsets={found.times} downbeatS={down} loopS={loopSeconds(bars, bpm)} barS={barS} onDownbeat={(s) => setDown(Math.round(s * 1000) / 1000)} />
       <div className="prow">
         <span className="plabel">Downbeat (beat 1)</span>
         <button type="button" className="btn sm" onClick={() => nudge(-10)} aria-label="Move the downbeat 10 milliseconds earlier">−10 ms</button>
@@ -215,6 +238,8 @@ export function GrooveReview({ getCtx, samples, rate, analysis, existing, wav, o
       <div className="prow">
         <span className="plabel">Tempo</span>
         <NumField value={Math.round(bpm * 10) / 10} label="Tempo BPM" min={30} max={300} decimal onCommit={setBpm} />
+        <button type="button" className="btn sm" onClick={() => octave(false)} disabled={bpm / 2 < 30} aria-label="Half the tempo">½×</button>
+        <button type="button" className="btn sm" onClick={() => octave(true)} disabled={bpm * 2 > 300} aria-label="Double the tempo">2×</button>
         <button type="button" className="btn sm" onClick={tap}>Tap tempo</button>
         {analysis.detected && <button type="button" className="linkbtn" onClick={() => setBpm(analysis.detected!.bpm)} data-testid="detected">Detected {analysis.detected.bpm} BPM</button>}
       </div>
@@ -222,6 +247,12 @@ export function GrooveReview({ getCtx, samples, rate, analysis, existing, wav, o
         <span className="plabel">Bars</span>
         {[1, 2, 4].map((n) => <button key={n} type="button" className={`btn sm${bars === n ? ' on' : ''}`} aria-pressed={bars === n} onClick={() => setBars(n)}>{n}</button>)}
         {tooLong && <span className="muted small">The recording after the downbeat is shorter than {bars} bars.</span>}
+      </div>
+      <div className="prow" role="group" aria-label="Hits found">
+        <span className="plabel">Hits found</span>
+        <button type="button" className="btn sm" onClick={() => setSens((v) => Math.max(0.35, (v ?? 1) / 1.5))} disabled={(sens ?? 1) <= 0.36} aria-label="Find fewer hits">Fewer</button>
+        <button type="button" className="btn sm" onClick={() => setSens((v) => Math.min(3.4, (v ?? 1) * 1.5))} disabled={(sens ?? 1) >= 3.3} aria-label="Find more hits">More</button>
+        <span className="muted small" data-testid="hits-found">{found.times.length} in the recording</span>
       </div>
       <div className="prow">
         <label className="plabel" htmlFor="quant">Tighten the timing {Math.round(quant * 100)}%</label>

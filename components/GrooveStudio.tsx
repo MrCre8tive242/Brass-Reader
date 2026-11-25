@@ -104,7 +104,7 @@ export default function GrooveStudio({ getCtx, clickBpm, onClose, onChanged }: P
       if (!buf) return;
       setView({
         k: 'review', samples: new Float32Array(buf.getChannelData(0)), rate: buf.sampleRate, existing: g,
-        analysis: { onsets: g.onsets ?? [], detected: null, downbeatS: g.downbeatS ?? 0, bars: ([1, 2, 4].includes(g.bars ?? 1) ? g.bars : 1) as 1 | 2 | 4 },
+        analysis: { onsets: g.onsets ?? [], starts: g.onsetStarts, detected: null, downbeatS: g.downbeatS ?? 0, bars: ([1, 2, 4].includes(g.bars ?? 1) ? g.bars : 1) as 1 | 2 | 4 },
       });
     } catch { setError('That recording could not be opened.'); }
   }

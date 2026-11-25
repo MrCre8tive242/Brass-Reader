@@ -1,5 +1,5 @@
 import type { Timeline } from './timeline';
-import { loopSeconds, type Slice } from './grooveAnalysis';
+import { buildSlices, loopSeconds, type Slice } from './grooveAnalysis';
 
 export type Feel = 'straight' | 'triplet';
 
@@ -117,8 +117,14 @@ export interface Groove {
   quantize?: number;
   downbeatS?: number;
   onsets?: number[];
+  /** Where the sound of each hit begins (same order as `onsets`): a flam starts a little before its main stroke. */
+  onsetStarts?: number[];
   slices?: Slice[];
   durationS?: number;
+  /** What the recording is multiplied by so its loudest hit sits at the level of the starter kit (quiet phone recordings come up). */
+  gain?: number;
+  /** How the slices were cut: 2 = overlapping slices that cross-fade. Older grooves are re-cut when they are opened. */
+  v?: number;
   // kit
   pattern?: KitPattern;
 }
@@ -142,6 +148,8 @@ export interface DrumHit {
   slice?: number;
   /** A recorded hit is cut when the next one starts (distance in quarters; Infinity = let it ring). */
   maxQ?: number;
+  /** Seconds of lead-in the next hit's slice has: this hit fades out while that one fades in. */
+  nextPre?: number;
 }
 
 /** Snap a beat position toward the grid (`amount` 0..1). */
@@ -182,8 +190,11 @@ export function grooveBarHits(g: Groove, bar: number, feelOverride?: Feel): Drum
     const out: DrumHit[] = [];
     g.slices.forEach((s, i) => {
       if (pos[i] < b * 4 || pos[i] >= b * 4 + 4) return;
-      const next = pos.filter((p) => p > pos[i] + 1e-6).reduce((m, p) => Math.min(m, p), Infinity);
-      out.push({ timeQ: pos[i] - b * 4, vel: 1, gm: 38, durQ: Math.min(0.5, next - pos[i]), slice: i, maxQ: next - pos[i] });
+      // what cuts this hit off: the next one, or (for the last hit) the first hit of the loop coming round again
+      let next = Infinity, ni = -1;
+      for (let k = 0; k < pos.length; k++) if (pos[k] > pos[i] + 1e-6 && pos[k] < next) { next = pos[k]; ni = k; }
+      if (ni < 0) for (let k = 0; k < pos.length; k++) if (pos[k] + bars * 4 < next) { next = pos[k] + bars * 4; ni = k; }
+      out.push({ timeQ: pos[i] - b * 4, vel: 1, gm: 38, durQ: Math.min(0.5, next - pos[i]), slice: i, maxQ: next - pos[i], ...(ni >= 0 && g.slices![ni].pre !== undefined ? { nextPre: g.slices![ni].pre } : {}) });
     });
     return out.sort((a, c) => a.timeQ - c.timeQ);
   }
@@ -231,10 +242,31 @@ export function buildDrumEvents(tl: Timeline, g: Groove, feel?: Feel): DrumHit[]
 /** Seconds from `anchorTime` for each hit at `bpm` (what the player does with the hits). */
 export const hitTimes = (hits: DrumHit[], bpm: number, anchorTime = 0, anchorQ = 0) => hits.map((h) => anchorTime + ((h.timeQ - anchorQ) * 60) / bpm);
 
-/** How a recorded groove is played at another tempo: nudged by playbackRate within +-8%, otherwise at its own speed. */
+/** Up to this far from its own tempo a recorded groove is simply played faster or slower, like tape. */
+export const RATE_RANGE = 0.08;
+/**
+ * How fast the hits of a recorded groove are played at another tempo. Within 8% of its own tempo the recording is
+ * sped up or slowed down with the music (at 100% that is exactly the loop as recorded). Further away the hits go
+ * back to their natural speed and pitch, and only their timing follows the music. In between it eases from one to
+ * the other, so a speed trainer stepping through the tempos never makes the drums jump in pitch.
+ */
 export function playbackRateFor(origBpm: number, bpm: number): number {
   const r = bpm / origBpm;
-  return Number.isFinite(r) && Math.abs(r - 1) <= 0.08 ? r : 1;
+  if (!Number.isFinite(r) || r <= 0) return 1;
+  const d = r - 1, a = Math.abs(d);
+  if (a <= RATE_RANGE) return r;
+  if (a >= 2 * RATE_RANGE) return 1;
+  return 1 + Math.sign(d) * (2 * RATE_RANGE - a);
+}
+
+/** The newest way of cutting slices (see `Groove.v`). */
+export const SLICE_VERSION = 2;
+
+/** A recorded groove saved by an older version gets its slices cut again the current way (same hits, same loop). */
+export function upgradeGroove<T extends Groove>(g: T): T {
+  if (g.kind !== 'recorded' || (g.v ?? 1) >= SLICE_VERSION || !g.onsets?.length || !g.bpm || !g.durationS) return g;
+  const slices = buildSlices(g.onsets, g.durationS, g.downbeatS ?? 0, g.bpm, Math.max(1, g.bars ?? 1), g.onsetStarts);
+  return slices.length ? { ...g, slices, v: SLICE_VERSION } : g;
 }
 
 export const grooveLoopSeconds = (g: Groove, bpm: number) => loopSeconds(grooveBars(g), bpm);
@@ -282,14 +314,20 @@ export function parseGrooveFile(text: string): { groove: Groove; audio?: { mime:
   if (!bpm) throw new Error('This groove file has no tempo.');
   const slices = Array.isArray(g.slices)
     ? g.slices.filter((s): s is Slice => !!s && [s.beat, s.start, s.end].every((v) => typeof v === 'number' && Number.isFinite(v) && v >= 0) && s.end > s.start).slice(0, 2000)
+      .map((s) => ({ beat: s.beat, start: s.start, end: s.end, ...(typeof s.pre === 'number' && Number.isFinite(s.pre) && s.pre >= 0 && s.pre < s.end - s.start ? { pre: s.pre } : {}) }))
     : [];
+  const onsets = Array.isArray(g.onsets) ? g.onsets.filter((v) => typeof v === 'number' && Number.isFinite(v)).slice(0, 4000) : [];
+  const onsetStarts = Array.isArray(g.onsetStarts) && g.onsetStarts.length === onsets.length && g.onsetStarts.every((v, i) => typeof v === 'number' && Number.isFinite(v) && v <= onsets[i] && v >= onsets[i] - 0.2)
+    ? g.onsetStarts : undefined;
   const groove: Groove = {
     id: '', name, kind: 'recorded', createdAt: Date.now(), feel, bpm,
     bars: [1, 2, 4].includes(g.bars as number) ? (g.bars as number) : 1,
     quantize: num(g.quantize, 0, 0, 1), downbeatS: num(g.downbeatS, 0, 0, 120), durationS,
-    onsets: Array.isArray(g.onsets) ? g.onsets.filter((v) => typeof v === 'number' && Number.isFinite(v)).slice(0, 4000) : [], slices,
+    onsets, ...(onsetStarts ? { onsetStarts } : {}), slices,
+    ...(typeof g.gain === 'number' && Number.isFinite(g.gain) ? { gain: Math.max(0.1, Math.min(12, g.gain)) } : {}),
+    ...(g.v === SLICE_VERSION && slices.every((s) => s.pre !== undefined) ? { v: SLICE_VERSION } : {}),
   };
   let bytes: Uint8Array;
   try { bytes = fromBase64(f.audio.base64); } catch { throw new Error('The audio in this groove file is damaged.'); }
-  return { groove, audio: { mime: typeof f.audio.mime === 'string' ? f.audio.mime : 'audio/wav', bytes } };
+  return { groove: upgradeGroove(groove), audio: { mime: typeof f.audio.mime === 'string' ? f.audio.mime : 'audio/wav', bytes } };
 }

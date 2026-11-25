@@ -1,4 +1,5 @@
 import { playbackRateFor, type DrumHit, type Groove, type KitInst } from './groove';
+import { SLICE_XF, type Slice } from './grooveAnalysis';
 
 /** Where the audio of a recorded groove comes from, and which groove the hits belong to. */
 export interface DrumSource { groove: Groove; buffer: AudioBuffer | null }
@@ -19,6 +20,8 @@ function noise(ctx: BaseAudioContext): AudioBuffer {
 }
 
 type Track = (node: AudioScheduledSourceNode) => void;
+
+const STOP_FADE_S = 0.012;
 
 function thump(ctx: BaseAudioContext, out: AudioNode, t: number, vel: number, f0: number, f1: number, decay: number, slap: number, track: Track) {
   const osc = ctx.createOscillator();
@@ -101,6 +104,40 @@ export function playKit(ctx: BaseAudioContext, out: AudioNode, inst: KitInst, t:
   }
 }
 
+export interface SlicePlan {
+  /** Context time the audio starts (a little before the stroke). */
+  startAt: number;
+  /** Where in the recording it starts, seconds. */
+  offset: number;
+  /** How long it sounds, seconds of output. */
+  play: number;
+  /** Length of the fade in and of the fade out, seconds. */
+  fade: number;
+}
+
+/**
+ * When and how one recorded hit is played so that its main stroke lands at `when`.
+ * Slices cut the current way begin a little before their stroke and run into the next one: started early and
+ * cross-faded with their neighbours, the loop at its own tempo is the recording itself, and at any other tempo
+ * there is no gap, no click and no doubled attack. `maxQ` (quarters to the next hit) cuts a hit that would run
+ * into the next; `nextPre` is the lead-in of that next hit. Null when there is nothing left to play.
+ */
+export function slicePlan(s: Slice, when: number, rate: number, spq: number, maxQ: number | undefined, nextPre: number | undefined, now: number): SlicePlan | null {
+  const legacy = s.pre === undefined;
+  const pre = s.pre ?? 0;
+  const xf = legacy ? 0.004 : SLICE_XF;
+  let startAt = when - pre / rate;
+  let offset = s.start;
+  if (startAt < now) { offset += (now - startAt) * rate; startAt = now; } // too late for the lead-in: skip it, keep the stroke on time
+  let play = (s.end - offset) / rate;
+  if (maxQ !== undefined && Number.isFinite(maxQ)) {
+    const cut = legacy ? when + maxQ * spq * 1.02 : when + maxQ * spq - (nextPre ?? pre) / rate + xf;
+    play = Math.min(play, cut - startAt);
+  }
+  if (!(play > 0.005)) return null;
+  return { startAt, offset, play, fade: Math.min(xf, play / 2) };
+}
+
 /** The drums' own channel: hits go in, sound comes out, and everything can be cut off at once. */
 export class DrumBus {
   readonly out: GainNode;
@@ -109,10 +146,15 @@ export class DrumBus {
   readonly log: DrumLogEntry[] = [];
   private active = new Set<AudioScheduledSourceNode>();
 
+  /** What the hits play into. Swapped for a new one on `stop()`, so the old one can fade out without touching new hits. */
+  private voices: GainNode;
+
   constructor(private ctx: BaseAudioContext, dest: AudioNode, expose = false) {
     this.out = ctx.createGain();
     this.out.gain.value = 0.8;
     this.out.connect(dest);
+    this.voices = ctx.createGain();
+    this.voices.connect(this.out);
     if (expose && typeof window !== 'undefined') (window as unknown as { __brDrumLog?: DrumLogEntry[] }).__brDrumLog = this.log;
   }
 
@@ -127,33 +169,44 @@ export class DrumBus {
   hit(h: DrumHit, when: number, spq: number, bpm: number, q = h.timeQ) {
     this.log.push({ t: when, q, inst: h.inst, slice: h.slice });
     if (this.log.length > 400) this.log.splice(0, 100);
-    if (h.inst) { playKit(this.ctx, this.out, h.inst, when, h.vel, this.track); return; }
+    if (h.inst) { playKit(this.ctx, this.voices, h.inst, when, h.vel, this.track); return; }
     const src = this.source;
     if (h.slice === undefined || !src?.buffer || !src.groove.slices) return;
     const s = src.groove.slices[h.slice];
     if (!s) return;
     const rate = playbackRateFor(src.groove.bpm ?? bpm, bpm);
-    const natural = s.end - s.start;
-    const len = Math.min(natural, ((h.maxQ ?? Infinity) * spq * rate) * 1.02);
-    if (len <= 0.005) return;
+    const plan = slicePlan(s, when, rate, spq, h.maxQ, h.nextPre, this.ctx.currentTime);
+    if (!plan) return;
+    const { startAt, offset, play, fade } = plan;
     const node = this.ctx.createBufferSource();
     node.buffer = src.buffer;
     node.playbackRate.value = rate;
     const g = this.ctx.createGain();
-    const play = len / rate;
-    g.gain.setValueAtTime(0, when);
-    g.gain.linearRampToValueAtTime(1, when + 0.002);
-    g.gain.setValueAtTime(1, when + Math.max(0.002, play - 0.006));
-    g.gain.linearRampToValueAtTime(0, when + play);
-    node.connect(g); g.connect(this.out);
-    node.start(when, s.start, len);
+    const level = Math.max(0.1, Math.min(12, src.groove.gain ?? 1));
+    g.gain.setValueAtTime(0, startAt);
+    g.gain.linearRampToValueAtTime(level, startAt + fade);
+    g.gain.setValueAtTime(level, startAt + play - fade);
+    g.gain.linearRampToValueAtTime(0, startAt + play);
+    node.connect(g); g.connect(this.voices);
+    node.start(startAt, offset, play * rate + 0.01);
     this.track(node);
   }
 
+  /** Cut everything that sounds or is waiting to sound: a few milliseconds of fade instead of a click. */
   stop() {
-    for (const n of this.active) { try { n.stop(); } catch { /* already ended */ } }
+    if (!this.active.size) return;
+    const old = this.voices, now = this.ctx.currentTime;
+    const nodes = [...this.active];
     this.active.clear();
+    try {
+      old.gain.setValueAtTime(1, now);
+      old.gain.linearRampToValueAtTime(0, now + STOP_FADE_S);
+    } catch { /* ignore */ }
+    for (const n of nodes) { try { n.stop(now + STOP_FADE_S + 0.005); } catch { /* already ended */ } }
+    this.voices = this.ctx.createGain();
+    this.voices.connect(this.out);
+    setTimeout(() => { try { old.disconnect(); } catch { /* ignore */ } }, 200);
   }
 
-  dispose() { this.stop(); try { this.out.disconnect(); } catch { /* ignore */ } }
+  dispose() { this.stop(); try { this.voices.disconnect(); this.out.disconnect(); } catch { /* ignore */ } }
 }
