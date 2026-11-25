@@ -7,6 +7,8 @@ import { readFlow } from './timeline';
 export interface BarIssue {
   /** 1-based written bar index. */
   measure: number;
+  /** 0-based index of the part the problem was found in. */
+  part: number;
   /** Printed label ("Pickup", "7"). */
   label: string;
   kind: 'empty' | 'short' | 'long';
@@ -44,22 +46,24 @@ function makeRest(doc: XDoc, durDiv: number, type: string | null, voice: string,
 
 /**
  * Check every bar against the time signature. Allowed to be short: the first bar (pickup), the last bar,
- * and bars marked implicit. Empty bars and short single-voice bars are padded with rests (so the cursor and the
+ * bars marked implicit, a bar that completes the pickup before a repeat sign / Fine / D.C., and the two halves
+ * of a bar split by a repeat sign. Empty bars and short single-voice bars are padded with rests (so the cursor and the
  * timeline agree); everything else is only flagged.
  */
 export function analyseAndRepair(xml: string): RepairResult {
   let doc: XDoc;
   try { doc = parseXml(xml); } catch { return { xml, issues: [], warnings: [] }; }
   const parts = partsOf(doc);
-  const { labels } = readFlow(parts);
+  const { labels, flow } = readFlow(parts);
   const issues = new Map<number, BarIssue>();
   let changed = false;
 
-  for (const part of parts) {
+  parts.forEach((part, pi) => {
     const measures = kids(part, 'measure');
     let divisions = 1;
     let beats = 0, beatType = 0;
-    measures.forEach((m, mi) => {
+    // pass 1: what every bar holds
+    const info = measures.map((m) => {
       let pos = 0, maxPos = 0, lastStart = 0, notes = 0, multiVoice = false;
       let lastVoice = '1';
       for (const el of kids(m)) {
@@ -85,25 +89,47 @@ export function analyseAndRepair(xml: string): RepairResult {
           maxPos = Math.max(maxPos, pos, start + dur);
         }
       }
-      if (!beats || !beatType) return;
-      const wantQ = (4 * beats) / beatType;
-      const haveQ = maxPos / divisions;
+      const known = !!beats && !!beatType;
+      return {
+        m, known, divisions, notes, multiVoice, lastVoice,
+        wantQ: known ? (4 * beats) / beatType : 0,
+        haveQ: maxPos / divisions,
+        empty: notes === 0 && !m.getElementsByTagName('forward').length,
+      };
+    });
+    const shortBy = (i: number) => (info[i] && info[i].known && !info[i].empty ? info[i].wantQ - info[i].haveQ : 0);
+    const pickupQ = info.length && shortBy(0) > TOL ? info[0].haveQ : 0;
+
+    // pass 2: decide
+    info.forEach((b, mi) => {
+      if (!b.known) return;
+      const { m, wantQ, haveQ } = b;
       const isFirst = mi === 0, isLast = mi === measures.length - 1;
       const implicit = m.getAttribute('implicit') === 'yes';
       let kind: BarIssue['kind'] | null = null;
-      if (notes === 0 && !m.getElementsByTagName('forward').length) kind = 'empty';
+      if (b.empty) kind = 'empty';
       else if (haveQ > wantQ + TOL) kind = 'long';
-      else if (haveQ < wantQ - TOL && !(isFirst || isLast || implicit)) kind = 'short';
+      else if (haveQ < wantQ - TOL && !(isFirst || isLast || implicit)) {
+        const f = flow[mi] ?? {};
+        // a bar that completes the pickup (before a repeat sign, Fine, D.C./D.S.) is short on purpose
+        const completesPickup = pickupQ > 0 && Math.abs(haveQ + pickupQ - wantQ) < TOL
+          && !!(f.backward || f.fine || f.dacapo || f.dalsegno || f.tocoda);
+        // a bar split in two by a repeat sign: the two halves add up
+        const g = flow[mi + 1] ?? {}, h = flow[mi - 1] ?? {};
+        const splitNext = (f.backward || g.forward) && shortBy(mi + 1) > TOL && Math.abs(haveQ + info[mi + 1].haveQ - wantQ) < TOL;
+        const splitPrev = mi > 0 && (h.backward || f.forward) && shortBy(mi - 1) > TOL && Math.abs(haveQ + info[mi - 1].haveQ - wantQ) < TOL;
+        if (!completesPickup && !splitNext && !splitPrev) kind = 'short';
+      }
       if (!kind) return;
       let repaired = false;
       if (kind === 'empty') {
-        m.appendChild(makeRest(doc, Math.round(wantQ * divisions), null, '1', true));
+        m.appendChild(makeRest(doc, Math.round(wantQ * b.divisions), null, '1', true));
         repaired = true;
-      } else if (kind === 'short' && !multiVoice) {
+      } else if (kind === 'short' && !b.multiVoice) {
         let left = wantQ - haveQ;
         for (const [q, type] of SIZES) {
           while (left >= q - 1e-6) {
-            m.appendChild(makeRest(doc, Math.max(1, Math.round(q * divisions)), type, lastVoice));
+            m.appendChild(makeRest(doc, Math.max(1, Math.round(q * b.divisions)), type, b.lastVoice));
             left -= q;
           }
         }
@@ -111,9 +137,9 @@ export function analyseAndRepair(xml: string): RepairResult {
       }
       if (repaired) changed = true;
       const prev = issues.get(mi + 1);
-      if (!prev) issues.set(mi + 1, { measure: mi + 1, label: labels[mi] ?? String(mi + 1), kind, haveQ, wantQ, repaired });
+      if (!prev) issues.set(mi + 1, { measure: mi + 1, part: pi, label: labels[mi] ?? String(mi + 1), kind, haveQ, wantQ, repaired });
     });
-  }
+  });
 
   const list = [...issues.values()].sort((a, b) => a.measure - b.measure);
   const warnings = list.map((i) => {

@@ -82,13 +82,13 @@ describe('OMR retry names the irregular bars and keeps the better reading', () =
   it('retries once with the bar numbers and takes the clean reading', async () => {
     const calls: unknown[] = [];
     const d = deps({ callClaude: vi.fn(async (_i, retry) => { calls.push(retry); return retry ? good : bad; }) });
-    const r = await runOmr(['data:image/jpeg;base64,AAAA'], 'claude', d);
+    const r = await runOmr({ images: ['data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/'] }, 'claude', d);
     expect(r).toMatchObject({ ok: true, engine: 'claude', warnings: [] });
-    expect((calls[1] as { error: string }).error).toMatch(/Bars 2 do not add up/);
+    expect(calls[1]).toMatch(/bars 2 do not add up/);
   });
   it('if the retry is no better, returns the padded first reading with a warning', async () => {
     const d = deps({});
-    const r = await runOmr(['data:image/jpeg;base64,AAAA'], 'claude', d);
+    const r = await runOmr({ images: ['data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/'] }, 'claude', d);
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.warnings).toEqual(['Bar 2 may be misread (has 2 of 4 beats).']);
@@ -99,8 +99,35 @@ describe('OMR retry names the irregular bars and keeps the better reading', () =
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     let n = 0;
     const d = deps({ callClaude: vi.fn(async () => { if (n++) throw new Error('boom'); return bad; }) });
-    const r = await runOmr(['data:image/jpeg;base64,AAAA'], 'claude', d);
+    const r = await runOmr({ images: ['data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/'] }, 'claude', d);
     expect(r.ok).toBe(true);
     spy.mockRestore();
+  });
+});
+
+import { notationToMusicXml, parseNotation } from '@/lib/omrNotation';
+
+describe('short bars that are short on purpose', () => {
+  const x = (t: string) => notationToMusicXml(parseNotation(t)).xml;
+  it('the bar before a repeat sign completes the pickup: not flagged, not padded', () => {
+    const xml = x('time: 4/4\n0: G4:q\n1: |: C5:w\n2: D5:h. :|\n3: E5:w');
+    const r = analyseAndRepair(xml);
+    expect(r.issues).toEqual([]);
+    expect(r.xml).toBe(xml);
+  });
+  it('the same short bar without a repeat sign is still flagged', () => {
+    const r = analyseAndRepair(x('time: 4/4\n0: G4:q\n1: C5:w\n2: D5:h.\n3: E5:w'));
+    expect(r.issues.map((i) => [i.label, i.kind, i.part])).toEqual([['2', 'short', 0]]);
+  });
+  it('a Fine bar completing the pickup is accepted', () => {
+    expect(analyseAndRepair(x('time: 3/4\n0: G4:q\n1: C5:h.\n2: D5:h fine\n3: E5:h.\n4: E5:h dc.fine')).issues).toEqual([]);
+  });
+  it('a bar split by a repeat sign is accepted, but two unrelated short bars are not', () => {
+    expect(analyseAndRepair(x('time: 4/4\n1: |: C5:w\n2: D5:h. :|\n3: E5:q\n4: E5:w\n5: E5:w')).issues).toEqual([]);
+    expect(analyseAndRepair(x('time: 4/4\n1: C5:w\n2: D5:h.\n3: E5:q\n4: E5:w\n5: E5:w')).issues.map((i) => i.label)).toEqual(['2', '3']);
+  });
+  it('reports the part a problem is in', () => {
+    const r = analyseAndRepair(x('part: A\n1: C5:w\n2: C5:w\n3: C5:w\npart: B\n1: C4:w\n2: C4:h\n3: C4:w'));
+    expect(r.issues.map((i) => [i.label, i.part])).toEqual([['2', 1]]);
   });
 });

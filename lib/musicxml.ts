@@ -198,3 +198,77 @@ export function detectSourceInstrument(xml: string): DetectedSource {
   } catch { /* fall through */ }
   return { id: 'trumpet', reason: 'no clef found, assuming treble' };
 }
+
+export interface PartSummary {
+  index: number;
+  name: string;
+  /** "treble", "bass", "tenor", "alto" or "" if the part has no clef. */
+  clef: string;
+  /** e.g. "2 flats", "1 sharp", "no sharps or flats". */
+  key: string;
+  /** e.g. "4/4". */
+  time: string;
+  bars: number;
+  notes: number;
+}
+export interface ScoreSummary { title: string; parts: PartSummary[]; tempo: number | null }
+
+const CLEF_NAMES: Record<string, string> = { G2: 'treble', F4: 'bass', C4: 'tenor', C3: 'alto' };
+
+export function keyName(fifths: number): string {
+  if (!fifths) return 'no sharps or flats';
+  const n = Math.abs(fifths);
+  return `${n} ${fifths < 0 ? 'flat' : 'sharp'}${n > 1 ? 's' : ''}`;
+}
+
+/** What a score holds, for the "check the reading" step and the part picker. Never throws. */
+export function summariseScore(xml: string): ScoreSummary {
+  const out: ScoreSummary = { title: extractTitle(xml), parts: [], tempo: null };
+  let doc: XDoc;
+  try { doc = parseXml(xml); } catch { return out; }
+  const names = new Map<string, string>();
+  const list = kid(doc.documentElement, 'part-list');
+  if (list) for (const sp of kids(list, 'score-part')) names.set(sp.getAttribute('id') ?? '', kidText(sp, 'part-name') ?? '');
+  partsOf(doc).forEach((part, index) => {
+    let clef = '', key = '', time = '', notes = 0;
+    const measures = kids(part, 'measure');
+    for (const m of measures) {
+      for (const el of kids(m)) {
+        if (el.nodeName === 'attributes') {
+          const c = kid(el, 'clef');
+          if (c && !clef) clef = CLEF_NAMES[`${kidText(c, 'sign')}${kidText(c, 'line') ?? ''}`] ?? (kidText(c, 'sign') === 'G' ? 'treble' : kidText(c, 'sign') === 'F' ? 'bass' : '');
+          const k = kid(el, 'key');
+          if (k && !key) key = keyName(kidNum(k, 'fifths') ?? 0);
+          const t = kid(el, 'time');
+          if (t && !time && kidText(t, 'beats')) time = `${kidText(t, 'beats')}/${kidText(t, 'beat-type')}`;
+        } else if (el.nodeName === 'note') { if (kid(el, 'pitch')) notes++; }
+        else if (out.tempo === null && (el.nodeName === 'direction' || el.nodeName === 'sound')) {
+          const s = el.nodeName === 'sound' ? el : kid(el, 'sound');
+          const t = s ? Number(s.getAttribute('tempo')) : NaN;
+          if (t >= 20 && t <= 400) out.tempo = Math.round(t);
+        }
+      }
+    }
+    const raw = (names.get(part.getAttribute('id') ?? '') ?? '').trim();
+    const name = !raw || /^(part|music|musicxml part|voice)$/i.test(raw) ? `Part ${index + 1}` : raw;
+    out.parts.push({ index, name, clef, key, time, bars: measures.length, notes });
+  });
+  return out;
+}
+
+/** The score with only part `index` kept (0-based). Returns the input unchanged if there is nothing to remove. */
+export function extractPart(xml: string, index: number): string {
+  let doc: XDoc;
+  try { doc = parseXml(xml); } catch { return xml; }
+  const parts = partsOf(doc);
+  if (parts.length < 2 || index < 0 || index >= parts.length) return xml;
+  const keepId = parts[index].getAttribute('id');
+  parts.forEach((p, i) => { if (i !== index) doc.documentElement.removeChild(p); });
+  const list = kid(doc.documentElement, 'part-list');
+  if (list) {
+    for (const el of kids(list)) {
+      if (el.nodeName === 'score-part' ? el.getAttribute('id') !== keepId : true) list.removeChild(el); // also drops part-group brackets
+    }
+  }
+  return serializeXml(doc);
+}
