@@ -4,7 +4,7 @@
 Phase: BUILD
 Next model: Sonnet (build agents) → test agents → fixer → Fable (high) refine
 Last updated by: Opus (plan)
-Current step: 6 (5 skipped: owned by another agent)
+Current step: 7
 
 ## Goal
 Mobile-first web app for a brass player (Junkanoo-style brass/drum group). Upload a photo or PDF of sheet music → app reads it into MusicXML → shows the score with a moving playback cursor + highlighted current bar → play/pause/prev bar/next bar/tap-bar-to-seek → set BPM → switch instrument (trumpet, mellophone, baritone, trombone, sousaphone), which changes BOTH the sound and the written part (transposition + clef) → download MIDI and MusicXML. Scans saved locally so you don't pay to rescan.
@@ -86,7 +86,7 @@ brass-reader/
 - [x] 3. `lib/timeline.ts` + `lib/midi.ts` + tests (ties merge, dotted, tuplets, multi-measure, time sig change; MIDI parses back with @tonejs/midi with correct note count/tempo). **Done when:** tests pass.
 - [x] 4. `app/api/omr/route.ts`, `lib/omrPrompt.ts`, `lib/omrClient.ts`. Unit-test validation/retry logic with the SDK call injected (plumbing only). **Done when:** tests pass; route returns clear 503 JSON when no key.
 - [ ] 5. `audiveris-server/` Dockerfile + server.py. Try installing Audiveris in this container (GitHub release or apt) and run it on a fixture image; record result in Handoff Notes. **Done when:** works locally, or blocker logged.
-- [ ] 6. `lib/player.ts` + `components/ScoreView.tsx` + `Transport.tsx` + `InstrumentPicker.tsx` + `Downloads.tsx` + pages + `lib/library.ts`. **Done when:** `npm run build` passes; in dev, opening a fixture plays, cursor moves, pause/seek/BPM/instrument switch work (verify with a Playwright smoke test).
+- [x] 6. `lib/player.ts` + `components/ScoreView.tsx` + `Transport.tsx` + `InstrumentPicker.tsx` + `Downloads.tsx` + pages + `lib/library.ts`. **Done when:** `npm run build` passes; in dev, opening a fixture plays, cursor moves, pause/seek/BPM/instrument switch work (verify with a Playwright smoke test).
 - [ ] 7. `components/Uploader.tsx` end to end (images + PDF + MusicXML upload → saved in library → opens player). **Done when:** e2e test uploading fixture .musicxml and a fixture PDF (OMR route stubbed only in this test) passes.
 - [ ] 8. README (setup, env vars, Vercel steps, Audiveris deploy), vercel.json. **Done when:** written.
 
