@@ -1,7 +1,8 @@
 # Brass Reader — Phase 2 plan (practice features)
 
 ## STATUS
-Phase: BUILD
+Phase: BUILD DONE (A, B, C1, C2, C3, E built; D not built)
+Next: QA
 Order: build (Sonnet) → QA (Sonnet) → fix (Sonnet) → refine (Fable, high)
 Drum groove (feature D) is waiting on research: docs/GROOVE_RESEARCH.md. Don't build it in this pass.
 
@@ -47,3 +48,35 @@ Drum groove (feature D) is waiting on research: docs/GROOVE_RESEARCH.md. Don't b
 - Commit per feature with trailers (see BUILD_PLAN rules). Don't push. Log deviations in the Handoff Notes below.
 
 ## Handoff Notes
+
+### Build agent (A, B, C1, C2, C3, E; D skipped)
+Tests at the end: 313 vitest unit tests, 63 Playwright e2e tests (Chromium, 375x812), `npm run build` passes. One commit per feature ("Brass Reader phase 2: ..."). New dependency: `pitchy` 4.1.0 (MIT) only.
+
+Where things live
+- Practice drawer: `components/PracticeSheet.tsx` (stays mounted when closed so the pitch check and recorder keep running), opened by the loop icon in the top bar (aria-label "Practice"). Sections: Band, Range, Fingerings, Pitch check, Record yourself, Loop and speed trainer. Transport is unchanged except a "Pass n · bpm → target BPM" line above it while a loop is set.
+- A: `lib/loop.ts` (+ `Player.setLoop/setTrainer/onPass`). The wrap re-anchors the audio clock at the exact loop end (no gap), cuts notes at the loop end, count-in only before pass 1, tempo steps at the wrap. Loop is picked by long-press (touch; a second long-press stretches it) or drag (mouse) on the score, or by typing bars. `SavedScore.loop`, `SavedScore.trainer`.
+- B: `lib/song.ts` (parts, fitBars, mergeScores, mergeTimelines), `lib/mixer.ts`, `components/BandPanel.tsx`. `SavedScore.parts` (single-part MusicXML + instrument per part), `myPart`, `mix`. Old records are split on the fly from `sourceXml` (nothing migrates in storage until a part is added or a part setting is changed). `TimelineEvent.part` tags notes; `Player.loadParts/setMix`, each part has its own sound; `toMidi(..., tracks)` writes one track per part; MusicXML download is the merged multi-part score. "Add a part" opens `/?addTo=<id>` (scan or MusicXML file joins the song).
+- C1: `lib/pitch.ts` (judging, PitchRun, summary), `lib/pitchMic.ts` (getUserMedia + pitchy on an AnalyserNode, 4096 samples, polled every 30 ms), `lib/micSession.ts` (one shared mic for pitch check and recorder), `components/PitchPanel.tsx`. `Permissions-Policy` now allows `microphone=(self)` (it was `()`).
+- C2: `lib/takes.ts` (IndexedDB keys `take:<scoreId>:<id>`, cap 10, `deleteScore` also deletes takes), `components/RecordPanel.tsx`.
+- C3: `lib/fingering.ts` (chart computed from each instrument's open harmonics: a note is played from the nearest open harmonic above it, 0-6 semitones; trombone positions = drop + 1; alternates are the other harmonics plus "3" for "1-2").
+- E: `lib/range.ts`; octave moves are saved per score/part/instrument as `SavedScore.octaveShifts` and applied on top of the transposed part (undoable), never written into `sourceXml`.
+- ScoreView: new props `marks` (colour notes: green/yellow/red/range), `labels` (text under notes, tap steps through alternates), `loop`, `onLoopSelect`. Notes are found by `noteKey(bar, offset in bar)`; the key map is built lazily on first use after each redraw.
+
+Deviations and decisions
+- Part picker semantics changed for multi-part files: a part is "my part" (shown alone, the others play along with their own instrument sound). "All parts together" in the picker now means "show the full score (stacked staves)"; my part stays the last chosen one. Old multi-part records without a saved part still open stacked, as before. A newly imported multi-part file opens on its first part.
+- Parts are lined up by bar position, not by the printed number; the player's own part decides bars, repeats and time. A shorter part is padded with rests (warning shown in the Band section), a longer one is cut (warning shown).
+- While the pitch check is on, my own part is muted at the player (not saved to the mix), so the speaker plays only the other parts and the click.
+- Pitch detection uses an analyser loop, not an AudioWorklet. Latency compensation = output latency + base latency + microphone latency (+ half the analysis window); there is no manual calibration control. A note is green within 25 cents, yellow within 50 (arrow up = sharp, down = flat), red beyond or when fewer than 3 clear frames were heard. An octave error counts as a wrong note.
+- Recording starts when Play is pressed (count-in included) and stops at Pause/end. "You + backing" replays the score from the bar where the take started at the tempo it was made at, and starts the audio `offsetS` (microphone latency) in, so the two line up approximately.
+- The existing e2e test `fixes.spec.ts` "portrait 375" selectors were scoped to `.transport` (the practice drawer now also contains `.chk` labels). Test helper `openScore`/`openPractice` moved to `tests/e2e/helpers.ts`.
+- Mic e2e files are split (`pitch.spec.ts`, `pitch-wrong.spec.ts`, `pitch-sharp.spec.ts`, `record.spec.ts`) because Playwright only allows `launchOptions` per file; each has its own generated WAV (`tests/e2e/audio.ts`).
+
+NOT TESTED
+- Real microphones, real speakers/headphones, real instruments: the e2e microphone is Chromium's fake device playing a steady generated tone. Pitch detection on real brass tone (octave errors, noisy rooms, low sousaphone notes with a phone microphone) is unmeasured; latency compensation is a guess for real devices (Bluetooth especially).
+- Alignment of "You + backing" playback against a real recording (only that it starts and stops).
+- `saveTake` pruning to 10 against a real IndexedDB (only the pure `takesToDelete` is unit tested); takes with Safari's audio/mp4 recorder (m4a) were not run.
+- iOS Safari: long-press loop selection, getUserMedia, MediaRecorder, the drawer on small screens. Landscape layout of the drawer.
+- Fingering charts: checked against the standard Bb trumpet chart and trombone positions by the unit tests written from the same rules; a brass teacher should look at the alternates (they are mechanical: other open harmonics within 6 semitones, plus 3 for 1-2) and at baritone/sousaphone low notes.
+- Loop plus repeats/endings (loop follows the first time each bar is played); loop on multi-part scores with different repeat structures per part.
+- Long scores with marks/fingerings switched on (the 160-bar performance test runs with both off).
+- Feature D (drums) not built.
