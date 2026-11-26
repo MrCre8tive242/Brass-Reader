@@ -8,6 +8,8 @@ import type { DrumSettings } from './drumSettings';
 import { deleteTakesOf } from './takes';
 import { asStorageError, reportStorageProblem, requestPersistence } from './storage';
 
+export type ScoreViewMode = 'full' | 'twobar' | 'scroll';
+
 export interface SavedScore {
   id: string;
   title: string;
@@ -38,8 +40,8 @@ export interface SavedScore {
   trainer?: Trainer;
   /** Drums under this score (chosen groove, volume, feel). */
   drums?: DrumSettings;
-  /** What the score screen shows: the whole sheet (default) or only the bar being played and the next one. */
-  view?: 'full' | 'twobar';
+  /** Rehearsal display, defaulting to the full sheet for existing scores. */
+  view?: ScoreViewMode;
 }
 
 const PREFIX = 'score:';

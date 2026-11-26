@@ -64,6 +64,8 @@ export interface DrawOptions {
   stack?: boolean;
   /** Closest the note heads may get to each other, px (room for the fingerings under them). */
   minGapPx?: number;
+  /** Continuous playback keeps the same staff scale across adjacent strips. */
+  fixedZoom?: number;
   /** Margin px around the drawing. */
   pad?: number;
 }
@@ -89,6 +91,12 @@ export async function drawWindow(osmd: Osmd, xml: string, bars: number[], o: Dra
   r.RenderSingleHorizontalStaffline = !o.stack;
   r.RenderXMeasuresPerLineAkaSystem = o.stack ? 1 : 0;
   r.StretchLastSystemLine = false;
+  if (o.fixedZoom !== undefined) {
+    r.CursorIgnoreRepetitions = true;
+    osmd.zoom = o.fixedZoom;
+    osmd.render();
+    return measureLayout(osmd, host);
+  }
   osmd.zoom = 1;
   osmd.render();
   const svg1 = host.querySelector('svg');

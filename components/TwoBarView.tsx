@@ -1,11 +1,12 @@
 'use client';
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { noteKey, offsetInBar, type Timeline } from '@/lib/timeline';
+import { noteKey, offsetInBar, slotAt, type Timeline } from '@/lib/timeline';
 import { windowAt, windowOfSlot, nextSlotOf, prevSlotOf, type BarWindow } from '@/lib/barWindow';
 import { drawWindow, makeWindowOsmd, type Box, type Osmd, type WindowLayout } from '@/lib/windowRender';
 import { windowOverlay, type Overlay, type NoteLookup } from '@/lib/windowOverlay';
 import type { FingerStyle } from '@/lib/fingerStyle';
-import { glideX } from '@/lib/glide';
+import { scrollWindow, type ScrollWindow } from '@/lib/scrollWindow';
+import { glideX, type GlidePoint } from '@/lib/glide';
 import type { InstrumentId } from '@/lib/instruments';
 import type { NoteMark } from './ScoreView';
 
@@ -17,6 +18,7 @@ export interface TwoBarHandle {
 }
 
 interface Props {
+  continuous?: boolean;
   /** The score of my part (single part MusicXML) the timeline was built from. */
   xml: string;
   tl: Timeline;
@@ -54,6 +56,7 @@ interface Pane {
   layout: WindowLayout | null;
   /** Boxes of the drawn bars, reaching down over the fingerings. */
   boxes: Box[];
+  anchors: GlidePoint[][];
   ready: Promise<void>;
   /** px height the pane needs (drawing plus fingerings). */
   height: number;
@@ -77,11 +80,13 @@ class Core {
   clock = 0;
   q = 0;
   minH = 0;
+  staffBaseline = 0;
   disposed = false;
   readyOnce = false;
   placed = '';
   lookupCache: { tl: Timeline; my: number; map: Map<string, number> } | null = null;
   cursor: HTMLDivElement;
+  lastScrollWindow: ScrollWindow | null = null;
   constructor(public stage: HTMLDivElement, public props: () => Props, private onFirst: () => void) {
     this.cursor = document.createElement('div');
     this.cursor.className = 'tb-cursor';
@@ -135,12 +140,15 @@ class Core {
     const overlay = svgEl('svg', { class: 'tb-fing', 'aria-hidden': 'true' });
     el.append(host, extras, hl, overlay);
     this.stage.insertBefore(el, this.cursor);
-    return { el, host, overlay, hl, extras, osmd: null, key: '', gen: -1, bars: [], layout: null, boxes: [], ready: Promise.resolve(), height: 0, stamp: 0, painted: { els: [], added: [] }, failed: false };
+    return { el, host, overlay, hl, extras, osmd: null, key: '', gen: -1, bars: [], layout: null, boxes: [], anchors: [], ready: Promise.resolve(), height: 0, stamp: 0, painted: { els: [], added: [] }, failed: false };
   }
 
   windowFor(q: number) {
     const p = this.props();
-    return windowAt(p.tl, q, p.loopQ);
+    if (!p.continuous) return { ...windowAt(p.tl, q, p.loopQ), focus: 0 };
+    const slot = slotAt(p.tl, q);
+    if (this.lastScrollWindow?.slot !== slot) this.lastScrollWindow = scrollWindow(p.tl, slot, p.loopQ);
+    return { ...this.lastScrollWindow, offQ: Math.max(0, q - p.tl.measureStartsQ[slot]) };
   }
 
   ensure(win: BarWindow, protect: string[]): Pane {
@@ -168,9 +176,23 @@ class Core {
       if (this.disposed || pane.key !== win.key || pane.gen !== this.gen) return;
       const s = this.size();
       pane.el.style.width = `${s.width}px`;
-      const layout = await drawWindow(pane.osmd, p.xml, win.bars, { width: s.width, height: s.height, below: s.below, stack: s.stack, maxSpace: s.stack ? 22 : 30, minGapPx: p.style === 'off' ? 0 : 30 });
+      const fixedZoom = p.continuous ? Math.max(0.95, Math.min(1.4, s.width / 400)) : undefined;
+      const layout = await drawWindow(pane.osmd, p.xml, win.bars, { fixedZoom, width: s.width, height: s.height, below: s.below, stack: s.stack, maxSpace: s.stack ? 22 : 30, minGapPx: p.style === 'off' ? 0 : 30 });
       if (this.disposed || pane.key !== win.key || pane.gen !== this.gen) return;
       pane.layout = layout;
+      if (p.continuous) {
+        pane.el.style.width = `${layout.width}px`;
+        // Engraved heads give the exact attacks. Cursor steps supply positions for rests.
+        const heads = new Map(layout.notes.map(n => [noteKey(n.bar, n.off), n.x]));
+        pane.anchors = layout.bars.map(() => []);
+        for (const step of layout.steps) {
+          pane.anchors[step.bar - 1]?.push({ off: step.off, x: heads.get(noteKey(step.bar, step.off)) ?? step.x });
+        }
+        pane.anchors.forEach((anchors, i) => {
+          anchors.sort((a, b) => a.off - b.off);
+          if (anchors[0]?.off > 0) anchors.unshift({ off: 0, x: layout.bars[i].x });
+        });
+      }
       pane.osmd.cursor.hide();
       pane.el.setAttribute('data-zoom', String(Math.round(layout.zoom * 100) / 100));
       pane.el.setAttribute('data-notes', JSON.stringify(layout.notes.map((n) => [n.bar, Math.round(n.off * 1000) / 1000, Math.round(n.x)])));
@@ -263,7 +285,12 @@ class Core {
   }
 
   fitStage(pane: Pane) {
-    this.minH = Math.max(this.minH, pane.height);
+    let inset = 0;
+    if (this.props().continuous && pane.layout) {
+      this.staffBaseline = Math.max(this.staffBaseline, pane.layout.staffTop, 9 * pane.layout.space);
+      inset = this.staffBaseline - pane.layout.staffTop;
+    }
+    this.minH = Math.max(this.minH, pane.height + inset);
     this.stage.style.height = `${Math.ceil(this.minH)}px`;
   }
 
@@ -286,7 +313,7 @@ class Core {
     const a = this.active;
     if (a && a.key === win.key && a.gen === this.gen && a.layout) { this.applyPos(); return; }
     const token = ++this.token;
-    const protect = this.protectKeys(win);
+    const protect = [win.key, ...this.neighbours(win).map(w => w.key)];
     const pane = this.ensure(win, protect);
     await pane.ready;
     if (token !== this.token || this.disposed) return;
@@ -301,26 +328,23 @@ class Core {
     setTimeout(() => { void this.prefetch(win); }, 30);
   }
 
-  protectKeys(win: BarWindow): string[] {
-    const p = this.props();
-    const keys = [win.key];
-    const n = nextSlotOf(p.tl, win.slot, p.loopQ);
-    const b = prevSlotOf(p.tl, win.slot, p.loopQ);
-    if (n !== null) keys.push(windowOfSlot(p.tl, n, p.loopQ).key);
-    if (b !== null) keys.push(windowOfSlot(p.tl, b, p.loopQ).key);
-    return keys;
+  neighbours(win: BarWindow) {
+    const { tl, loopQ, continuous } = this.props();
+    if (continuous) {
+      const { next, previous } = scrollWindow(tl, win.slot, loopQ);
+      return [next, previous].filter(s => s !== null).map(s => scrollWindow(tl, s, loopQ));
+    }
+    return [nextSlotOf(tl, win.slot, loopQ), prevSlotOf(tl, win.slot, loopQ)]
+      .filter(s => s !== null).map(s => windowOfSlot(tl, s, loopQ));
   }
 
   async prefetch(win: BarWindow) {
-    if (this.disposed) return;
-    const p = this.props();
-    const protect = this.protectKeys(win);
-    for (const s of [nextSlotOf(p.tl, win.slot, p.loopQ), prevSlotOf(p.tl, win.slot, p.loopQ)]) {
-      if (s === null || this.disposed) continue;
-      if (this.token && this.windowFor(this.q).key !== win.key) return; // moved on
-      const w = windowOfSlot(p.tl, s, p.loopQ);
-      const pane = this.ensure(w, protect);
-      await pane.ready;
+    if (this.disposed || this.windowFor(this.q).key !== win.key) return;
+    const others = this.neighbours(win);
+    const protect = [win.key, ...others.map(w => w.key)];
+    for (const w of others) {
+      if (this.disposed || this.windowFor(this.q).key !== win.key) return;
+      await this.ensure(w, protect).ready;
     }
   }
 
@@ -338,6 +362,10 @@ class Core {
     const win = this.windowFor(this.q);
     if (win.key !== a.key) return;
     const off = offQ ?? win.offQ;
+    if (this.props().continuous) {
+      this.placeStrip(a, win.slot, win.focus, off);
+      return;
+    }
     const L = a.layout;
     let pick = L.steps.find((s) => s.bar === 1);
     for (const s of L.steps) if (s.bar === 1 && s.off <= off + 1e-6) pick = s;
@@ -370,6 +398,23 @@ class Core {
     }
   }
 
+  /** Move engraved music under a stationary playhead using the audio player's
+   * quarter-note position, including across the space before the next attack. */
+  placeStrip(pane: Pane, slot: number, focus: number, off: number) {
+    const { tl } = this.props();
+    const bar = pane.boxes[focus];
+    if (!bar?.w) return;
+    const duration = (tl.measureStartsQ[slot + 1] ?? tl.totalQ) - tl.measureStartsQ[slot];
+    const points = pane.anchors[focus];
+    const next = pane.anchors[focus + 1]?.[0];
+    const endX = next?.off === 0 ? next.x : bar.x + bar.w;
+    const x = glideX(points, off, duration, endX) ?? (bar.x + bar.w * Math.min(1, off / duration));
+    const anchor = this.stage.clientWidth * 0.30;
+    const y = this.staffBaseline - pane.layout!.staffTop;
+    pane.el.style.transform = `translate3d(${anchor - x}px, ${y}px, 0)`;
+    this.cursor.style.display = 'block';
+  }
+
   autoScroll(force: boolean) {
     const r = this.stage.getBoundingClientRect();
     if (!r.height) return;
@@ -388,7 +433,9 @@ class Core {
   /** Everything drawn is stale (new score, new size): start again from the current position. */
   reset() {
     this.gen++;
+    this.lastScrollWindow = null;
     this.minH = 0;
+    this.staffBaseline = 0;
     this.stage.style.height = '';
     this.placed = '';
     void this.show();
@@ -445,7 +492,10 @@ const TwoBarView = forwardRef<TwoBarHandle, Props>(function TwoBarView(props, re
   // a new score (another instrument, octave move, part): draw again
   useEffect(() => { core.current?.reset(); }, [props.xml, props.tl]);
   // the bars after a loop wraps differ: show the right ones
-  useEffect(() => { core.current?.show(); }, [props.loopQ?.startQ, props.loopQ?.endQ]);
+  useEffect(() => {
+    const c = core.current;
+    if (c) { c.lastScrollWindow = null; void c.show(); }
+  }, [props.loopQ?.startQ, props.loopQ?.endQ]);
   // writing on top
   useEffect(() => { core.current?.repaint(); }, [props.style, props.instrument, props.marks, props.flagged, props.loop?.from, props.loop?.to]);
 
@@ -460,7 +510,7 @@ const TwoBarView = forwardRef<TwoBarHandle, Props>(function TwoBarView(props, re
     const a = c?.active;
     const stage = stageRef.current;
     if (!c || !a?.layout || !stage) return 0;
-    const r = stage.getBoundingClientRect();
+    const r = a.el.getBoundingClientRect();
     const x = clientX - r.left, y = clientY - r.top;
     let best = -1, bestD = Infinity;
     a.boxes.forEach((b, i) => {
@@ -503,7 +553,7 @@ const TwoBarView = forwardRef<TwoBarHandle, Props>(function TwoBarView(props, re
   }
 
   return (
-    <div className="score tb" ref={wrap} data-testid="twobar" data-busy={busy ? '1' : '0'} data-style={props.style}>
+    <div className={props.continuous ? 'score tb scroll-score' : 'score tb'} ref={wrap} data-testid={props.continuous ? 'continuous-scroll' : 'twobar'} data-busy={busy ? '1' : '0'} data-style={props.style}>
       {busy && <div className="score-busy"><span className="spinner" aria-hidden /> Drawing bars…</div>}
       <div className="tb-stage" ref={stageRef} onClick={onClick} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endGesture} onPointerCancel={endGesture} onPointerLeave={endGesture} onContextMenu={(e) => { if (swallow.current) e.preventDefault(); }} />
     </div>

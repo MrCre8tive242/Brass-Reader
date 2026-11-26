@@ -11,7 +11,7 @@ import { DEFAULT_FINGER_STYLE, normalizeFingerStyle, type FingerStyle } from '@/
 import Transport from '@/components/Transport';
 import InstrumentPicker from '@/components/InstrumentPicker';
 import Downloads from '@/components/Downloads';
-import { getScore, updateScore, type SavedScore } from '@/lib/library';
+import { getScore, updateScore, type ScoreViewMode, type SavedScore } from '@/lib/library';
 import { onStorageProblem } from '@/lib/storage';
 import { INSTRUMENTS, isInstrumentId, type InstrumentId } from '@/lib/instruments';
 import { toConcert, fromConcert } from '@/lib/transpose';
@@ -101,7 +101,7 @@ export default function ScorePage() {
   const player = useRef<Player | null>(null);
   const view = useRef<ScoreViewHandle>(null);
   const bars = useRef<TwoBarHandle>(null);
-  const [viewMode, setViewMode] = useState<'full' | 'twobar'>('full');
+  const [viewMode, setViewMode] = useState<ScoreViewMode>('full');
   const [videoOpen, setVideoOpen] = useState(false);
   const [fingerStyle, setFingerStyle] = useState<FingerStyle>(DEFAULT_FINGER_STYLE);
   const measureRef = useRef(1);
@@ -148,7 +148,9 @@ export default function ScorePage() {
         if (s.loop) setLoopDraft(s.loop);
         setTrainer(normalizeTrainer(s.trainer));
         setDrums(normalizeDrums(s.drums));
-        setViewMode(s.view === 'twobar' ? 'twobar' : 'full');
+        const sampleView = id === PRACTICE_SAMPLE_ID ? new URLSearchParams(window.location.search).get('view') : null;
+        const initialView = sampleView ?? s.view;
+        setViewMode(initialView === 'twobar' || initialView === 'scroll' ? initialView : 'full');
       }
     }).catch(() => alive && setScore(null));
     return () => { alive = false; };
@@ -432,7 +434,7 @@ export default function ScorePage() {
   const changeFingerings = (v: boolean) => { setFingerings(v); lsSet('brass-reader:fingerings', v ? '1' : '0'); };
   useEffect(() => { setFingerStyle(normalizeFingerStyle(lsGet('brass-reader:finger-style'))); }, []);
   const changeFingerStyle = useCallback((v: FingerStyle) => { setFingerStyle(v); lsSet('brass-reader:finger-style', v); }, []);
-  const changeView = useCallback((v: 'full' | 'twobar') => { setViewMode(v); void updateScore(id, { view: v }); }, [id]);
+  const changeView = useCallback((v: ScoreViewMode) => { setViewMode(v); void updateScore(id, { view: v }); }, [id]);
   const measureCount = tlNow?.measureCount ?? 0;
   const measureCountRef = useRef(0);
   measureCountRef.current = measureCount;
@@ -570,7 +572,7 @@ export default function ScorePage() {
   const drumsLive = !!groove && drums.on;
   const fingerWord = target === 'trombone' ? 'Slide' : 'Fingering';
   // fingerings are on screen: always in the 2-bar view (unless switched off), on the full sheet when asked for
-  const fingerShown = fingerStyle !== 'off' && (viewMode === 'twobar' || fingerings);
+  const fingerShown = fingerStyle !== 'off' && (viewMode !== 'full' || fingerings);
   const fingerStatus = fingerStyle === 'numbers' ? 'Numbers' : fingerStyle === 'dots' ? (target === 'trombone' ? 'Slide icon' : 'Valve dots') : 'Both';
   const loopNow = normalizeLoop(loop, measureCount);
   const loopStatus = loopNow
@@ -657,6 +659,7 @@ export default function ScorePage() {
               <div className="seg" role="radiogroup" aria-label="View" data-testid="view-toggle">
                 <button type="button" role="radio" aria-checked={viewMode === 'full'} className={viewMode === 'full' ? 'on' : ''} onClick={() => changeView('full')}>Full sheet</button>
                 <button type="button" role="radio" aria-checked={viewMode === 'twobar'} className={viewMode === 'twobar' ? 'on' : ''} onClick={() => changeView('twobar')}>2 bars</button>
+                <button type="button" role="radio" aria-checked={viewMode === 'scroll'} className={viewMode === 'scroll' ? 'on' : ''} onClick={() => changeView('scroll')}>Continuous scroll</button>
               </div>
             </div>
             {/* the two bars always fill the screen: there is nothing to make bigger or smaller there */}
@@ -666,11 +669,13 @@ export default function ScorePage() {
                 <button type="button" onClick={() => changeZoom(ZOOM_STEP)} aria-label="Zoom in" disabled={zoom >= ZOOM_MAX}>A+</button>
               </div>
             )}
-            {viewMode === 'twobar' && <FingerStylePicker value={fingerStyle} onChange={changeFingerStyle} label={fingerWord === 'Slide' ? 'Slide' : 'Fingerings'} slide={target === 'trombone'} />}
+            {viewMode !== 'full' && <FingerStylePicker value={fingerStyle} onChange={changeFingerStyle} label={fingerWord === 'Slide' ? 'Slide' : 'Fingerings'} slide={target === 'trombone'} />}
           </div>
         )}
-        {derived && !derived.err && viewMode === 'twobar' && derived.tl && (
+        {derived && !derived.err && viewMode !== 'full' && derived.tl && (
           <TwoBarView
+            key={viewMode}
+            continuous={viewMode === 'scroll'}
             ref={bars}
             xml={derived.mineXml}
             tl={derived.tl}
@@ -739,7 +744,7 @@ export default function ScorePage() {
         </Section>
         <Section id="fingerings" title={INSTRUMENTS[target].id === 'trombone' ? 'Slide positions' : 'Fingerings'} status={fingerShown ? fingerStatus : undefined} live={fingerShown}>
           <FingerStylePicker value={fingerStyle} onChange={changeFingerStyle} label="How they are written" slide={target === 'trombone'} testId="finger-style-practice" />
-          <p className="muted small">One choice for the 2-bar view, the full sheet and the videos.</p>
+          <p className="muted small">One fingering style for all score views and videos.</p>
           <label className="chk wide">
             <input type="checkbox" checked={fingerings && fingerStyle !== 'off'} disabled={fingerStyle === 'off'} onChange={(e) => changeFingerings(e.target.checked)} aria-label="Show fingerings" /> Show {target === 'trombone' ? 'slide positions' : 'fingerings'} on the full sheet too
           </label>
@@ -785,7 +790,7 @@ export default function ScorePage() {
           loop={videoLoop}
           slide={target === 'trombone'}
           hasDrums={!!groove}
-          initial={{ view: viewMode === 'twobar' ? 'twobar' : 'full', orientation: 'portrait', style: fingerStyle, drums: drums.on, countIn: true, loopOnly: false }}
+          initial={{ view: viewMode === 'full' ? 'full' : 'twobar', orientation: 'portrait', style: fingerStyle, drums: drums.on, countIn: true, loopOnly: false }}
           onChoose={(c) => changeFingerStyle(c.style)}
           onClose={() => setVideoOpen(false)}
           build={(c: VideoChoices): VideoJob => {

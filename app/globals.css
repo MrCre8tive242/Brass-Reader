@@ -547,3 +547,9 @@ details.warn summary strong { margin-right: 0.25em; }
   .player-page .page:has(.viewbar .zoom) .score-setup { grid-column: 1; grid-row: 1; }
   .player-page .page:has(.viewbar .zoom) .viewbar { grid-column: 2; grid-row: 1; }
 }
+
+/* The score moves in audio time. Only the gold playhead stays fixed. */
+.scroll-score .tb-pane { will-change: transform; }
+.scroll-score .tb-stage { overflow: hidden; }
+.scroll-score .tb-cursor { left: 30%; top: 5%; bottom: 5%; width: 3px; transform: translateX(-50%); background: #bc790c; opacity: 0.94; box-shadow: none; }
+@media (prefers-color-scheme: dark) { .scroll-score .tb-cursor { background: #f4c473; } }
