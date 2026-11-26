@@ -135,6 +135,71 @@ export function findSplitRow(profile: Float32Array, opts: { blank?: number; minB
   return best ? best.mid : null;
 }
 
+/** The most strips one page is cut into. */
+export const MAX_STRIPS = 4;
+
+/**
+ * Where to cut a page into strips of about two systems each. Returns the cut rows (ascending, each in the middle
+ * of a blank gap between two systems); an empty list means "send the page whole" (one or two systems, or no
+ * clean gap such as a tilted photo).
+ *
+ * All blank bands are found, not just one. A band only counts as a gap if it is clearly wider than the blank
+ * stripes between the lines of one staff (twice the typical blank run), so a cut never goes through a staff. Ink
+ * bands that are too small to be a staff (a title, a page number) are not systems of their own: they stay with
+ * the neighbouring system, so a title is never cut off from the music or sent as a strip by itself.
+ */
+export function planStrips(profile: Float32Array, opts: { blank?: number; minBand?: number; perStrip?: number; maxStrips?: number } = {}): number[] {
+  const h = profile.length;
+  const blank = opts.blank ?? 0.0006;
+  // blank runs strictly between ink (ignore the empty margin at the top and bottom of the page)
+  const runs: { start: number; end: number }[] = [];
+  let first = 0; while (first < h && profile[first] <= blank) first++;
+  let last = h - 1; while (last > first && profile[last] <= blank) last--;
+  if (first >= last) return [];
+  let start = -1;
+  for (let y = first; y <= last + 1; y++) {
+    const isBlank = y <= last && profile[y] <= blank;
+    if (isBlank && start < 0) start = y;
+    if (!isBlank && start >= 0) { runs.push({ start, end: y }); start = -1; }
+  }
+  if (runs.length === 0) return [];
+  // ink bands and the blank gaps between them; a gap that is wide compared with the ink beside it is not a gap
+  // between systems but a space inside a staff (ink beside it is a staff line) or a gap next to a title or page
+  // number (a band much smaller than the gap): those bands are joined to their neighbour, smallest gap first
+  const minBand = opts.minBand ?? 6;
+  const bands: { a: number; b: number }[] = [];
+  const gaps: { start: number; end: number }[] = runs.filter((r) => r.end - r.start >= minBand);
+  if (gaps.length === 0) return [];
+  let at = first;
+  for (const g of gaps) { bands.push({ a: at, b: g.start }); at = g.end; }
+  bands.push({ a: at, b: last + 1 });
+  for (;;) {
+    let worst = -1;
+    for (let i = 0; i < gaps.length; i++) {
+      const len = gaps[i].end - gaps[i].start;
+      const small = Math.min(bands[i].b - bands[i].a, bands[i + 1].b - bands[i + 1].a) < 0.4 * len;
+      if (small && (worst < 0 || len < gaps[worst].end - gaps[worst].start)) worst = i;
+    }
+    if (worst < 0) break;
+    bands.splice(worst, 2, { a: bands[worst].a, b: bands[worst + 1].b });
+    gaps.splice(worst, 1);
+  }
+  const cuts = gaps;
+  const systems = cuts.length + 1;
+  if (systems <= 2) return [];
+  const per = opts.perStrip ?? 2;
+  const n = Math.min(opts.maxStrips ?? MAX_STRIPS, Math.ceil(systems / per));
+  const base = Math.floor(systems / n), extra = systems % n;
+  const rows: number[] = [];
+  let used = 0;
+  for (let k = 0; k < n - 1; k++) {
+    used += base + (k < extra ? 1 : 0);
+    const g = cuts[used - 1];
+    rows.push(g.start + ((g.end - g.start) >> 1));
+  }
+  return rows;
+}
+
 /** Canvas size after rotating by a multiple of 90 degrees. */
 export function rotatedSize(w: number, h: number, quarterTurns: number): { w: number; h: number } {
   return ((quarterTurns % 4) + 4) % 2 === 1 ? { w: h, h: w } : { w, h };

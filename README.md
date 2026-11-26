@@ -162,6 +162,7 @@ Vercel cannot run Java, so the free Audiveris reader runs as a separate Docker s
 ## Known limits
 
 - The reader has not yet been run against real photos from this build (no API key was available while building). The steps around it are tested; how well it reads your charts is something to find out on the first rehearsal. Clean, flat, sharp photos of printed parts are the best case; handwriting and tilted or creased pages are the worst.
+- Dense pages are read in zoomed strips. A scan of up to three pages is cut at the blank gaps between lines of music into strips of about two lines each (at most four per page), every strip is enlarged to about 2000 px wide, and the strips are read at the same time and joined, so a busy page takes about as long as one strip. A tilted photo with no clean gaps is sent whole. If a strip cannot be read, the whole scan is read in one go instead (slower). If a page holds several instruments and you type the part to read, the page is not cut into parallel reads, so the parts stay aligned.
 - Dynamics, articulation, slurs, lyrics and text are not read. Grace notes are drawn but not played.
 - A wrong clef or time signature can only be fixed by reading again (a wrong key signature can be fixed in the review step).
 - D.C. and D.S. are followed once; on that pass repeats are not taken and the last ending is played.

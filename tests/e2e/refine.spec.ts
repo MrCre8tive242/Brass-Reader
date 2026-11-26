@@ -69,22 +69,24 @@ test('a phone photo is cleaned up, cut at the gap between systems and sent with 
   await page.getByRole('button', { name: 'Read 1 page' }).click();
   await expect(page.getByTestId('review')).toBeVisible({ timeout: 30_000 });
   expect(seen).toHaveLength(1);
-  expect(seen[0].tiles).toEqual([2]); // one page, sent as a top and a bottom image
-  expect(seen[0].images).toHaveLength(2);
-  const top = await inspect(page, seen[0].images[0], [[0.02, 0.02], [0.98, 0.5], [0.5, 0.995]]);
-  const bottom = await inspect(page, seen[0].images[1], [[0.02, 0.5], [0.98, 0.97], [0.5, 0.005]]);
-  // both halves keep the full width and together cover the page; the cut is in the wide gap (45-55 %)
-  expect(top.w).toBe(1800);
-  expect(bottom.w).toBe(1800);
-  expect(top.h + bottom.h).toBe(2400);
-  expect(top.h / 2400).toBeGreaterThan(0.45);
-  expect(top.h / 2400).toBeLessThan(0.56);
+  // eight systems: four strips of two systems, each zoomed to 2000 px wide
+  expect(seen[0].tiles).toEqual([4]);
+  expect(seen[0].images).toHaveLength(4);
+  const strips = [];
+  for (const im of seen[0].images) strips.push(await inspect(page, im, [[0.02, 0.01], [0.98, 0.5], [0.5, 0.99]]));
+  for (const t of strips) expect(t.w).toBe(2000);
+  // together the strips cover the page (2400 px tall at 1800 wide, enlarged by 2000/1800)
+  const total = strips.reduce((n, t) => n + t.h, 0);
+  expect(Math.abs(total - 2400 * (2000 / 1800))).toBeLessThan(8);
+  // every cut is in a gap between two systems, never through a staff: the first strip ends before the third system (28 %)
+  expect(strips[0].h / total).toBeGreaterThan(0.17);
+  expect(strips[0].h / total).toBeLessThan(0.28);
   // paper is white everywhere, including what was the deep shadow, and the result is grey (no colour cast)
-  for (const p of [...top.px, ...bottom.px]) {
+  for (const p of strips.flatMap((t) => t.px)) {
     expect(Math.min(...p), JSON.stringify(p)).toBeGreaterThan(238);
     expect(Math.max(...p) - Math.min(...p)).toBeLessThan(6);
   }
-  // ink stays dark: a note head in the top system and one in the last (shadowed) system
+  // ink stays dark: a note head in the first strip and one in the last (shadowed) strip
   const ink = await page.evaluate(async (srcs) => {
     const darkest = async (src: string) => {
       const img = new Image(); img.src = src; await img.decode();
@@ -94,7 +96,7 @@ test('a phone photo is cleaned up, cut at the gap between systems and sent with 
       let min = 255; for (let i = 0; i < d.length; i += 4) if (d[i] < min) min = d[i];
       return min;
     };
-    return [await darkest(srcs[0]), await darkest(srcs[1])];
+    return [await darkest(srcs[0]), await darkest(srcs[3])];
   }, seen[0].images);
   expect(ink[0]).toBeLessThan(40);
   expect(ink[1]).toBeLessThan(40);
@@ -109,15 +111,23 @@ test('EXIF orientation from the camera and the manual rotate button are both app
   await page.getByTestId('file-input').setInputFiles({ name: 'a.jpg', mimeType: 'image/jpeg', buffer: await fakePhoto(page, 1200, 800, { exifOrientation: 6 }) });
   await page.getByRole('button', { name: 'Read 1 page' }).click();
   await expect(page.getByTestId('review')).toBeVisible({ timeout: 30_000 });
-  const a = await inspect(page, seen[0].images[0], []);
-  expect([a.w, a.h]).toEqual([800, 1200]);
+  const sizes = async (images: string[]) => {
+    const all = [];
+    for (const im of images) all.push(await inspect(page, im, []));
+    return { w: all[0].w, h: all.reduce((n, t) => n + t.h, 0) };
+  };
+  // upright 800 x 1200 (the systems run sideways in this fake, so there is no gap to cut at): enlarged until the long edge is 2200
+  const a = await sizes(seen[0].images);
+  expect(seen[0].images).toHaveLength(1);
+  expect([a.w, a.h]).toEqual([1467, 2200]);
   // turn it once more by hand: back to landscape
   await page.getByRole('button', { name: 'Rotate page 1' }).click();
   await expect(page.locator('.thumb img')).toHaveAttribute('style', /rotate\(90deg\)/);
   await page.getByRole('button', { name: 'Read 1 page' }).click();
   await expect.poll(() => seen.length, { timeout: 30_000 }).toBe(2);
-  const b = await inspect(page, seen[1].images[0], []);
-  expect([b.w, b.h]).toEqual([1200, 800]);
+  const b = await sizes(seen[1].images);
+  expect(b.w).toBe(2000);
+  expect(Math.abs(b.h - 1200 * (2000 / 1200) * (800 / 1200))).toBeLessThan(8); // landscape 1200 x 800 enlarged to 2000 x 1333
 });
 
 test('review step: facts, things to check, part choice, hints sent, read again, then the score opens on the chosen part', async ({ page }) => {
@@ -135,7 +145,7 @@ test('review step: facts, things to check, part choice, hints sent, read again, 
   const review = page.getByTestId('review');
   await expect(review).toBeVisible({ timeout: 30_000 });
   expect(seen[0].hints).toEqual({ instrument: 'trumpet', part: 'Trumpet 1' });
-  expect(seen[0].tiles).toEqual([1]); // a small photo is not cut
+  expect(seen[0].tiles).toEqual([4]); // small photos are cut too (strips of two systems, enlarged); with a part named the server still reads them in one call
   await expect(page.getByLabel('Title')).toHaveValue('Parade Tune');
   await expect(page.getByTestId('review-facts')).toHaveText(/Clef\s*treble\s*Key\s*2 flats\s*Time\s*4\/4\s*Bars\s*4/);
   await expect(page.getByTestId('review-warnings')).toContainText('2 things to check');

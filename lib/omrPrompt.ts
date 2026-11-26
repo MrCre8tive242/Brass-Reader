@@ -68,7 +68,7 @@ ${OMR_EXAMPLE}
 - Rhythm: after each bar, add up the values. They must equal the time signature. The only exceptions are a pickup bar and the bar that completes it (usually the last bar, or the bar before a repeat sign). If a bar does not add up, look again before moving on: the usual causes are a missed dot, a short rest, the number of beams or flags, or a tie.
 - Photographs are often tilted, curved, shadowed or creased. Follow the staff lines, not the edges of the picture.
 - Only the notes matter. Leave out lyrics, chord symbols, fingerings, dynamics, articulation marks, slurs, rehearsal letters and other text.
-- Several images are consecutive pages of one piece, in order (each image is labelled). When a page is given as a top part and a bottom part, they follow each other and do not overlap. Bar numbers continue across images, and the clef, key and time stay in force until the page shows a change.
+- Several images are consecutive pages of one piece, in order (each image is labelled). When a page is given as a top part and a bottom part (or as several parts from the top), they follow each other and do not overlap. Bar numbers continue across images, and the clef, key and time stay in force until the page shows a change.
 - If a system has several staves (a score or a duet) and you were not asked for one particular part, write each staff as its own part: the header and all bars of the first part, then a new "part:" header and all bars of the next. Every part uses the same bar numbers.
 - If the picture is not sheet music, reply with ${NOT_MUSIC} and one short sentence saying what it shows.`;
 
@@ -87,7 +87,7 @@ export function cleanPartHint(s: unknown): string {
 
 /**
  * Labels for the images: one label per image. `tiles[i]` = how many images page i was cut into (1 = whole page,
- * 2 = top and bottom). Without `tiles` every image is one page.
+ * 2 = top and bottom, 3 or 4 = part k of n from the top). Without `tiles` every image is one page.
  */
 export function pageLabels(imageCount: number, tiles?: number[]): string[] {
   const t = tiles && tiles.reduce((a, b) => a + b, 0) === imageCount ? tiles : Array(imageCount).fill(1);
@@ -98,6 +98,34 @@ export function pageLabels(imageCount: number, tiles?: number[]): string[] {
     else for (let k = 0; k < n; k++) out.push(`${page}, ${n === 2 ? (k === 0 ? 'top part' : 'bottom part') : `part ${k + 1} of ${n} from the top`}:`);
   });
   return out;
+}
+
+/** Label of an image that is read on its own as part `index` of `count` of the piece. */
+export function partLabel(index: number, count: number): string {
+  return `Part ${index} of ${count} of the piece, from the top:`;
+}
+
+/**
+ * Prompt for one strip of a piece that is read together with the other strips by separate readers at the same
+ * time. The replies are joined afterwards, so each one numbers its bars from 1 and says what is printed at the
+ * start of its own first line.
+ */
+export function partPrompt(index: number, count: number, hints: OmrHints = {}): string {
+  const lines: string[] = [];
+  lines.push(`This image is part ${index} of ${count} of one piece, cut from the top of the music down at the gaps between lines of music. The other parts are read at the same time by someone else and the readings are joined afterwards, in order. Read only this image.`);
+  lines.push('Bars continue from one part to the next, so the first bar of this part may be the middle of a phrase or a tie. Number the bars of this part from 1, in order.');
+  lines.push('At the start of your reply write the clef, key and time as they are printed at the start of the first line in this image (clef: and key: always; time: only if a time signature is printed there). If a sign is not printed, leave that line out.');
+  if (index === 1) {
+    lines.push('This is the first part: it may have the title, the part name, a tempo mark and a pickup bar (bar 0). Write them if they are printed.');
+  } else {
+    lines.push('This is not the first part: leave out the title, part name and tempo, and do not write a pickup bar (bar 0). Start with bar 1.');
+  }
+  if (hints.instrument && INSTRUMENTS[hints.instrument]) {
+    const inst = INSTRUMENTS[hints.instrument];
+    lines.push(`The player says this music is written for ${inst.name}, which normally reads ${inst.clef} clef. Use that only to settle doubt: if the image clearly shows something else, write what the image shows.`);
+  }
+  lines.push('Check that every bar adds up before you answer (a bar cut by the edge of the image excepted), and reply with the transcription only.');
+  return lines.join('\n');
 }
 
 export function userPrompt(pageCount: number, hints: OmrHints = {}): string {

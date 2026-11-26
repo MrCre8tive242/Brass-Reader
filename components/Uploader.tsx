@@ -136,7 +136,8 @@ export default function Uploader({ addTo }: { addTo?: string }) {
       setBusy('Preparing the pages…');
       const p = await prepareFiles(items.map((i) => ({ file: i.file, rotate: i.rotate })), setBusy);
       if (p.kind === 'musicxml') { await save(p.xml, titleFromName(items[0].file.name), 'musicxml'); return; }
-      setBusy(engine === 'audiveris' ? 'Reading with the free reader…' : 'Reading the music…');
+      const several = p.images.length >= 2 && p.images.length <= 8 && !partHint.trim();
+      setBusy(engine === 'audiveris' ? 'Reading with the free reader…' : several ? `Reading ${p.images.length} parts of the page at once…` : 'Reading the music…');
       const hints = { instrument: source === 'auto' ? undefined : source, part: partHint.trim() || undefined };
       const r = await callOmr({ images: p.images, tiles: p.tiles, hints }, engine);
       const summary = summariseScore(r.musicxml);
@@ -253,7 +254,7 @@ export default function Uploader({ addTo }: { addTo?: string }) {
         <div role="status" className="busy" data-testid="busy">
           <span className="spinner" aria-hidden />
           <span>{busy}{elapsed >= 3 ? ` ${elapsed} s` : ''}</span>
-          {busy.startsWith('Reading the music') && <span className="muted small">Usually 20 to 60 seconds. Keep this screen open.</span>}
+          {busy.startsWith('Reading') && !busy.includes('free reader') && <span className="muted small">Usually 20 to 60 seconds. Keep this screen open.</span>}
         </div>
       )}
       {error && (

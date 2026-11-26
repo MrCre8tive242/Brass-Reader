@@ -1,5 +1,5 @@
 import { readMusicXmlFile } from './musicxml';
-import { toGray, flattenLighting, grayToRgba, inkProfile, findSplitRow, rotatedSize, type Gray } from './imagePrep';
+import { toGray, flattenLighting, grayToRgba, inkProfile, planStrips, rotatedSize, type Gray } from './imagePrep';
 import type { InstrumentId } from './instruments';
 
 /** Long edge of an image as sent: about the most detail the reader keeps of a page-shaped picture. */
@@ -7,8 +7,11 @@ export const MAX_EDGE = 2200;
 /** Long edge of the working copy when a page may be cut into a top and a bottom image. */
 const WORK_EDGE = 3000;
 export const MAX_PDF_PAGES = 6;
-/** Pages are cut in two (each half sent at full size, doubling the detail) only for short pieces. */
+/** Pages are cut into strips of a couple of systems (each sent zoomed, for more detail per note) only for short pieces. */
 export const SPLIT_MAX_PAGES = 3;
+/** Width every strip is scaled to (up or down): the notes of a small screenshot are enlarged to be readable. */
+export const STRIP_WIDTH = 2000;
+const MAX_ZOOM = 3;
 const MAX_TOTAL = 3_800_000; // chars of data-URL payload, keeps the request under Vercel's 4.5 MB limit
 
 /** Codes: 'client' = problem before anything was sent, 'too_large', 'network', or the server's code. */
@@ -39,12 +42,18 @@ async function decode(blob: Blob): Promise<{ source: CanvasImageSource; w: numbe
 }
 
 /** A page image (or a horizontal strip of one) ready to be encoded. */
-export interface Drawable { source: CanvasImageSource; w: number; h: number; sy?: number; sh?: number }
+export interface Drawable { source: CanvasImageSource; w: number; h: number; sy?: number; sh?: number; /** Scale to STRIP_WIDTH wide (up or down) instead of only shrinking. */ zoom?: boolean }
+
+/** Scale for a drawable: its width brought to STRIP_WIDTH if zoomed (at most MAX_ZOOM times larger), never past `maxEdge`. */
+export function drawScale(w: number, sh: number, zoom: boolean | undefined, maxEdge: number): number {
+  const base = zoom ? Math.min(MAX_ZOOM, STRIP_WIDTH / w) : 1;
+  return Math.min(base, maxEdge / Math.max(w, sh));
+}
 
 /** Encode a drawable (or its strip) as a JPEG data URL with the long edge at most `maxEdge`. */
 function encode(d: Drawable, maxEdge: number, quality: number): string {
   const sy = d.sy ?? 0, sh = d.sh ?? d.h;
-  const scale = Math.min(1, maxEdge / Math.max(d.w, sh));
+  const scale = drawScale(d.w, sh, d.zoom, maxEdge);
   const w = Math.max(1, Math.round(d.w * scale));
   const h = Math.max(1, Math.round(sh * scale));
   const canvas = document.createElement('canvas');
@@ -64,13 +73,13 @@ export interface PageOptions {
   rotate?: number;
   /** Greyscale, even out the lighting, stretch the contrast. On for photos, off for PDF pages. */
   clean?: boolean;
-  /** Cut the page into a top and a bottom image when there is a clean gap between systems. */
+  /** Cut the page into strips of about two systems at the blank gaps between systems, and zoom each strip. */
   split?: boolean;
 }
 
 /**
  * Draw one page onto a working canvas (rotated, right size), clean it up, and return it as one drawable or as a
- * top and a bottom strip.
+ * list of strips (top to bottom, at most 4).
  */
 export function finishPage(src: { source: CanvasImageSource; w: number; h: number }, o: PageOptions = {}): Drawable[] {
   const turns = (((o.rotate ?? 0) % 4) + 4) % 4;
@@ -89,7 +98,7 @@ export function finishPage(src: { source: CanvasImageSource; w: number; h: numbe
   ctx.rotate((turns * Math.PI) / 2);
   ctx.drawImage(src.source, -sw / 2, -sh / 2, sw, sh);
   ctx.restore();
-  const whole: Drawable = { source: canvas, w, h };
+  const whole: Drawable = { source: canvas, w, h, zoom: o.split };
   if (!o.clean && !o.split) return [whole];
   let gray: Gray;
   try {
@@ -103,10 +112,13 @@ export function finishPage(src: { source: CanvasImageSource; w: number; h: numbe
   } catch {
     return [whole]; // out of memory or a tainted canvas: send the page as it is
   }
-  // only tall pages with real detail to gain are cut
-  if (o.split && h > w * 1.15 && h >= 1800) {
-    const row = findSplitRow(inkProfile(gray));
-    if (row) return [{ source: canvas, w, h, sy: 0, sh: row }, { source: canvas, w, h, sy: row, sh: h - row }];
+  if (o.split) {
+    // pages, screenshots and landscape pages alike: cut at every clean gap between systems
+    const rows = planStrips(inkProfile(gray));
+    const edges = [0, ...rows, h];
+    const out: Drawable[] = [];
+    for (let i = 0; i + 1 < edges.length; i++) out.push({ source: canvas, w, h, sy: edges[i], sh: edges[i + 1] - edges[i], zoom: true });
+    return out;
   }
   return [whole];
 }
@@ -155,7 +167,7 @@ export function fitToBudget<T>(sources: T[], enc: (src: T, edge: number, quality
 }
 
 export type Prepared =
-  | { kind: 'images'; images: string[]; /** Images per page, top to bottom (1 or 2). */ tiles: number[] }
+  | { kind: 'images'; images: string[]; /** Images per page, top to bottom (1 to 4). */ tiles: number[] }
   | { kind: 'musicxml'; xml: string };
 
 export interface FileInput { file: File; rotate?: number }
@@ -179,7 +191,7 @@ export async function prepareFiles(input: (File | FileInput)[], onProgress?: (te
     else throw new OmrError(`Unsupported file: ${f.name}`, 'client');
   }
   if (jobs.length === 0) throw new OmrError('That file has no pages.', 'client');
-  // 2. draw, clean and (for short pieces) cut every page
+  // 2. draw, clean and (for short pieces) cut every page into strips
   const split = jobs.length <= SPLIT_MAX_PAGES;
   const sources: Drawable[] = [];
   const tiles: number[] = [];
@@ -192,7 +204,7 @@ export async function prepareFiles(input: (File | FileInput)[], onProgress?: (te
       parts = finishPage(await renderPdfPage(job, split ? WORK_EDGE : MAX_EDGE), { rotate: job.rotate, split });
     } else {
       const d = await decode(job.file);
-      try { parts = finishPage(d, { rotate: job.rotate, clean: true, split: split && Math.max(d.w, d.h) >= 1800 }); } finally { d.close(); }
+      try { parts = finishPage(d, { rotate: job.rotate, clean: true, split }); } finally { d.close(); }
     }
     sources.push(...parts);
     tiles.push(parts.length);

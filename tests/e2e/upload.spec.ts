@@ -68,7 +68,7 @@ test('a PDF is rasterised, sent to the (stubbed) reader, saved and opened', asyn
   expect(errs).toEqual([]);
 });
 
-test('photos are downscaled to at most 2200px and can be reordered/removed', async ({ page }) => {
+test('photos are scaled to 2000px wide and can be reordered/removed', async ({ page }) => {
   const seen = await stubOmr(page);
   await page.goto('/');
   const png = async (w: number, h: number) => {
@@ -94,7 +94,7 @@ test('photos are downscaled to at most 2200px and can be reordered/removed', asy
     const img = new Image(); img.src = src; await img.decode();
     return [img.naturalWidth, img.naturalHeight];
   }, seen[0].images[0]);
-  expect(dims).toEqual([2200, 1100]);
+  expect(dims).toEqual([2000, 1000]); // a page without a gap between systems goes whole, scaled to 2000 px wide
 });
 
 test('reader errors show a clear message with fallbacks', async ({ page }) => {

@@ -246,7 +246,7 @@ describe('readOptions', () => {
   });
   it('rejects junk', () => {
     expect(readOptions({ tiles: [2, 2] }, 3)).toMatch(/tiles/);
-    expect(readOptions({ tiles: [3] }, 3)).toMatch(/tiles/);
+    expect(readOptions({ tiles: [5] }, 5)).toMatch(/tiles/);
     expect(readOptions({ tiles: 'x' }, 1)).toMatch(/tiles/);
     expect(readOptions({ hints: { instrument: 'kazoo' } }, 1)).toMatch(/instrument/);
     expect(readOptions({ hints: { part: 'x'.repeat(300) } }, 1)).toMatch(/part/);

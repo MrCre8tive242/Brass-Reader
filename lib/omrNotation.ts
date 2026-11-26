@@ -577,3 +577,89 @@ export function rekeyXml(xml: string, fifths: number, part?: number): string {
   });
   return serializeXml(doc);
 }
+
+// ---------------------------------------------------------------- strips read separately
+
+const BAR_LINE = /^(\s*(?:bar\s*)?)(pickup|\d{1,4})(\s*-\s*)?(\d{1,4})?(\s*:.*)$/i;
+const FLAG_LINE = /^(\s*\?\s*)(pickup|\d{1,4})(.*)$/i;
+const HEADER_LINE = /^\s*(title|part|clef|key|time|tempo)\s*[:=]\s*(.*)$/i;
+
+/** The key, time and clef in force at the end of a part (header values, then the changes written in its bars). */
+function endState(p: NPart): { clef: string; key: number; time: NTime } {
+  const st = { clef: p.clef, key: p.key, time: p.time };
+  for (const b of p.bars) { if (b.clef) st.clef = b.clef; if (b.key !== undefined) st.key = b.key; if (b.time) st.time = b.time; }
+  return st;
+}
+
+const sameTime = (a: NTime, b: NTime) => a.beats === b.beats && a.beatType === b.beatType;
+
+/**
+ * Join the readings of several strips of one piece (each read on its own, numbering its bars from 1) into one
+ * reading in the same text format. The header (title, part name, tempo, starting clef/key/time) comes from the first strip.
+ * Later strips: bars are renumbered to continue, title/part/tempo lines are dropped, and a clef/key/time line is
+ * kept only if it differs from what is in force (it then applies from that strip's first bar); a strip that does not
+ * print a time signature (the usual case below the first system) keeps the one in force. Flag lines ("? 4: ...")
+ * move with their bars. Repeats, endings and signs are bar tokens and pass through untouched.
+ * Returns null if the strips cannot be joined safely (a reading with several parts, or with no bars).
+ */
+export function mergeStripReadings(texts: string[]): string | null {
+  if (texts.length === 0) return null;
+  const out: string[] = [];
+  let state: { clef: string; key: number; time: NTime } | null = null;
+  let offset = 0; // highest bar number so far
+  for (let k = 0; k < texts.length; k++) {
+    const text = texts[k].replace(/\r/g, '').replace(/^```[a-z]*\n?|```$/gm, '').trim();
+    const score = parseNotation(text);
+    if (score.parts.length !== 1 || score.parts[0].bars.length === 0) return null;
+    const part = score.parts[0];
+    const labels = part.bars.map((b) => Number(b.label));
+    const last = Math.max(...labels);
+    if (k === 0) {
+      out.push(text);
+      state = endState(part);
+      offset = last;
+      continue;
+    }
+    // a pickup does not exist after the first strip: its bar becomes an ordinary one and the rest follow it
+    const shift = offset + (labels.includes(0) ? 1 : 0);
+    const headerChanges: string[] = [];
+    const seen = { clef: false, key: false, time: false };
+    const body: string[] = [];
+    let inBars = false;
+    for (const raw of text.split('\n')) {
+      const line = raw.trim();
+      if (!line || line.startsWith('#') || line.startsWith('//')) continue;
+      const q = line.match(FLAG_LINE);
+      if (q && line.startsWith('?')) {
+        const n = q[2].toLowerCase() === 'pickup' ? 0 : Number(q[2]);
+        body.push(`${q[1]}${n + shift}${q[3]}`);
+        continue;
+      }
+      if (line.startsWith('?')) { body.push(line); continue; }
+      const hm = line.match(HEADER_LINE);
+      if (hm) {
+        const key = hm[1].toLowerCase();
+        if (inBars) { if (key === 'clef' || key === 'key' || key === 'time') body.push(line); continue; }
+        if (key === 'clef') { seen.clef = true; const c = parseClef(hm[2]); if (c && c !== state!.clef) headerChanges.push(`clef: ${c}`); }
+        else if (key === 'key') { seen.key = true; const c = parseKey(hm[2]); if (c !== null && c !== state!.key) headerChanges.push(`key: ${c === 0 ? '0' : c > 0 ? `${c}#` : `${-c}b`}`); }
+        else if (key === 'time') { seen.time = true; const c = parseTime(hm[2]); if (c && !sameTime(c, state!.time)) headerChanges.push(`time: ${c.beats}/${c.beatType}`); }
+        continue; // title, part name and tempo belong to the first strip
+      }
+      const bm = line.match(BAR_LINE);
+      if (bm) {
+        inBars = true;
+        const a = bm[2].toLowerCase() === 'pickup' ? 0 : Number(bm[2]);
+        const range = bm[3] && bm[4] ? `${bm[3].replace(/\s+/g, '')}${Number(bm[4]) + shift}` : '';
+        body.push(`${a + shift}${range}${bm[5]}`);
+        continue;
+      }
+      if (inBars) body.push(line);
+    }
+    out.push(...headerChanges, ...body);
+    const e = endState(part);
+    // what a strip does not print stays as it was
+    state = { clef: seen.clef || part.bars.some((b) => b.clef) ? e.clef : state!.clef, key: seen.key || part.bars.some((b) => b.key !== undefined) ? e.key : state!.key, time: seen.time || part.bars.some((b) => b.time) ? e.time : state!.time };
+    offset = last + shift;
+  }
+  return out.join('\n');
+}

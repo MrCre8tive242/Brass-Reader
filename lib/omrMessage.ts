@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import { userPrompt, pageLabels } from './omrPrompt';
+import { userPrompt, pageLabels, partLabel, partPrompt } from './omrPrompt';
 import { sniffImage, OmrUserError, type OmrRequest } from './omrCore';
 
 /**
@@ -8,7 +8,7 @@ import { sniffImage, OmrUserError, type OmrRequest } from './omrCore';
  * (the expensive part) are read from the prompt cache instead of being paid for twice.
  */
 export function buildContent(req: OmrRequest, followUp?: string): Anthropic.ContentBlockParam[] {
-  const labels = pageLabels(req.images.length, req.tiles);
+  const labels = req.part ? [partLabel(req.part.index, req.part.count)] : pageLabels(req.images.length, req.tiles);
   const content: Anthropic.ContentBlockParam[] = [];
   req.images.forEach((url, i) => {
     const media = sniffImage(url);
@@ -18,7 +18,7 @@ export function buildContent(req: OmrRequest, followUp?: string): Anthropic.Cont
     if (i === req.images.length - 1) block.cache_control = { type: 'ephemeral' };
     content.push(block);
   });
-  content.push({ type: 'text', text: userPrompt(req.tiles?.length ?? req.images.length, req.hints) });
+  content.push({ type: 'text', text: req.part ? partPrompt(req.part.index, req.part.count, req.hints) : userPrompt(req.tiles?.length ?? req.images.length, req.hints) });
   if (followUp) content.push({ type: 'text', text: followUp });
   return content;
 }

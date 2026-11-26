@@ -1,7 +1,7 @@
 import { validateMusicXml } from './musicxml';
 import { extractXml, retryPrompt, fixBarsPrompt, cleanPartHint, NOT_MUSIC, type BarProblem, type OmrHints } from './omrPrompt';
 import { analyseAndRepair, type RepairResult } from './repair';
-import { parseNotation, notationToMusicXml, mergeCorrections, barCount, type NScore } from './omrNotation';
+import { parseNotation, notationToMusicXml, mergeCorrections, mergeStripReadings, barCount, type NScore } from './omrNotation';
 import { isInstrumentId } from './instruments';
 
 /** Thrown by `callClaude` when the model hit its output limit (the reading is cut off and cannot be used). */
@@ -23,6 +23,8 @@ export interface OmrRequest {
   /** How many images each page was cut into (top to bottom); absent = one image per page. */
   tiles?: number[];
   hints?: OmrHints;
+  /** Set on the single-strip requests of a parallel reading: this image is part `index` of `count` of the piece (1-based). */
+  part?: { index: number; count: number };
 }
 
 export interface OmrDeps {
@@ -48,8 +50,14 @@ export type OmrResult =
   | { ok: true; status: 200; musicxml: string; engine: 'claude' | 'audiveris'; warnings: string[]; flags: OmrFlag[] }
   | { ok: false; status: number; error: string; code: string };
 
-/** Up to 6 pages; a page may be sent as two images (top and bottom half), so the hard cap is higher. */
+/** Up to 6 pages, but only up to 3 are cut into strips (at most 4 each), so 12 images is the hard cap. */
 export const MAX_IMAGES = 12;
+/** Most strips of a piece that are read at the same time, one model call each. */
+export const PARALLEL_MAX = 8;
+/** Largest number of strips one page may be cut into. */
+export const MAX_TILES = 4;
+/** If the parallel reading failed after this long, there is no time left for the single-call fallback. */
+export const FALLBACK_BUDGET_MS = 120_000;
 export const MAX_PAGES = 6;
 export const MAX_BODY_BYTES = 4_000_000;
 
@@ -89,7 +97,7 @@ export function validateImages(images: unknown): string | null {
 export function readOptions(body: { tiles?: unknown; hints?: unknown }, imageCount: number): string | { tiles?: number[]; hints: OmrHints } {
   let tiles: number[] | undefined;
   if (body.tiles !== undefined) {
-    if (!Array.isArray(body.tiles) || body.tiles.length > MAX_PAGES || body.tiles.some((n) => !Number.isInteger(n) || n < 1 || n > 2)
+    if (!Array.isArray(body.tiles) || body.tiles.length > MAX_PAGES || body.tiles.some((n) => !Number.isInteger(n) || n < 1 || n > MAX_TILES)
       || (body.tiles as number[]).reduce((a, n) => a + n, 0) !== imageCount) return 'tiles must list how many images each page has.';
     tiles = body.tiles as number[];
   } else if (imageCount > MAX_PAGES) return `Too many pages (max ${MAX_PAGES}).`;
@@ -189,15 +197,51 @@ function notMusic(reason: string): ClaudeResult {
   return { error: `That picture does not look like sheet music${reason ? ` (${reason.replace(/[.\s]+$/, '')})` : ''}. Try another photo.`, notMusic: true };
 }
 
+/** Whether a request is read as separate strips at the same time (not when the player asked for one part of several instruments). */
+export function canReadInParallel(req: OmrRequest): boolean {
+  return req.images.length >= 2 && req.images.length <= PARALLEL_MAX && !req.hints?.part && !req.part;
+}
+
+/**
+ * Read every strip with its own model call at the same time and join the replies into one reading.
+ * Null when any call fails or any reply is unusable (the caller then reads everything in one call).
+ */
+async function readInParallel(req: OmrRequest, deps: OmrDeps): Promise<string | null> {
+  const count = req.images.length;
+  const replies = await Promise.all(req.images.map((image, i) =>
+    deps.callClaude({ images: [image], tiles: [1], hints: req.hints, part: { index: i + 1, count } })));
+  const texts: string[] = [];
+  for (const raw of replies) {
+    const r = interpretReply(raw);
+    if (r.kind !== 'notation') return null;
+    texts.push(r.text);
+  }
+  return mergeStripReadings(texts);
+}
+
 /** At most two model calls per scan: the reading, then one second look (targeted at the bars that fail the check). */
 async function viaClaude(req: OmrRequest, deps: OmrDeps): Promise<ClaudeResult> {
   const now = deps.now ?? Date.now;
   const t0 = now();
-  let raw: string;
-  try {
-    raw = await deps.callClaude(req);
-  } catch (e) {
-    return describeFailure('claude request failed', e);
+  let raw: string | null = null;
+  if (canReadInParallel(req)) {
+    try {
+      raw = await readInParallel(req, deps);
+    } catch (e) {
+      console.error('[omr] reading the strips at once failed:', e);
+      if (now() - t0 > FALLBACK_BUDGET_MS) return describeFailure('claude request failed', e);
+    }
+    if (raw === null) {
+      if (now() - t0 > FALLBACK_BUDGET_MS) return { error: UNUSABLE_ERROR };
+      console.info('[omr] strips could not be joined: reading everything in one call');
+    }
+  }
+  if (raw === null) {
+    try {
+      raw = await deps.callClaude(req);
+    } catch (e) {
+      return describeFailure('claude request failed', e);
+    }
   }
   let reading = interpretReply(raw);
   if (reading.kind === 'not_music') return notMusic(reading.reason);
