@@ -268,8 +268,8 @@ test('upload buttons show a focus ring; page-reorder targets are 48px; favicon e
   const favicon: number[] = [];
   page.on('response', (r) => { if (/favicon|icon\.svg|\/icon/.test(r.url())) favicon.push(r.status()); });
   await page.goto('/');
-  await page.keyboard.press('Tab');
-  await page.keyboard.press('Tab'); // skip to the first upload button's hidden input
+  await page.getByRole('link', { name: 'Try a sample' }).focus();
+  await page.keyboard.press('Tab'); // move from the sample to the first upload input
   const ring = await page.evaluate(() => {
     const el = document.activeElement?.closest('label.btn') as HTMLElement | null;
     return el ? getComputedStyle(el).outlineStyle + ' ' + getComputedStyle(el).outlineWidth : 'none';

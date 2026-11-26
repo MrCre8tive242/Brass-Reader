@@ -7,6 +7,8 @@ export const PauseIcon = ({ size, className }: P) => <svg {...base(size)} classN
 export const PrevIcon = ({ size, className }: P) => <svg {...base(size)} className={className}><rect x="4" y="5" width="3" height="14" rx="1" fill="currentColor" /><path d="M20 6v12a.8.8 0 0 1-1.22.68l-9.6-6a.8.8 0 0 1 0-1.36l9.6-6A.8.8 0 0 1 20 6z" fill="currentColor" /></svg>;
 export const NextIcon = ({ size, className }: P) => <svg {...base(size)} className={className}><rect x="17" y="5" width="3" height="14" rx="1" fill="currentColor" /><path d="M4 6v12a.8.8 0 0 0 1.22.68l9.6-6a.8.8 0 0 0 0-1.36l-9.6-6A.8.8 0 0 0 4 6z" fill="currentColor" /></svg>;
 const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
+export const MusicIcon = ({ size, className }: P) => <svg {...base(size)} className={className}><path d="M9 17V6l11-2v11M9 9l11-2" {...stroke} /><ellipse cx="6" cy="18" rx="3" ry="2.5" {...stroke} /><ellipse cx="17" cy="16" rx="3" ry="2.5" {...stroke} /></svg>;
+export const LibraryIcon = ({ size, className }: P) => <svg {...base(size)} className={className}><path d="M4 4v16M9 4v16M14 5l5 14" {...stroke} /></svg>;
 export const BackIcon = ({ size, className }: P) => <svg {...base(size)} className={className}><path d="M15 5l-7 7 7 7" {...stroke} /></svg>;
 export const ChevronIcon = ({ size, className }: P) => <svg {...base(size)} className={className}><path d="M9 5l7 7-7 7" {...stroke} /></svg>;
 export const CameraIcon = ({ size, className }: P) => <svg {...base(size)} className={className}><path d="M4 8h3l1.6-2.4h6.8L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" {...stroke} /><circle cx="12" cy="13.2" r="3.4" {...stroke} /></svg>;

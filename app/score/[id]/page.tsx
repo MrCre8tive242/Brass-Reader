@@ -591,43 +591,38 @@ export default function ScorePage() {
         <Link href="/" className="back" aria-label="Back to library"><BackIcon /></Link>
         <h1 className="title">{score.title}</h1>
         <button type="button" className="practice-btn" aria-expanded={practiceOpen} aria-controls="practice-sheet" aria-haspopup="dialog" onClick={() => setPracticeOpen((o) => !o)}><LoopIcon size={22} /><span>Practice</span></button>
-        {/* the two bars always fill the screen: there is nothing to make bigger or smaller there */}
-        {viewMode === 'full' && (
-          <div className="zoom" role="group" aria-label="Score size">
-            <button type="button" onClick={() => changeZoom(-ZOOM_STEP)} aria-label="Zoom out" disabled={zoom <= ZOOM_MIN}>A−</button>
-            <button type="button" onClick={() => changeZoom(ZOOM_STEP)} aria-label="Zoom in" disabled={zoom >= ZOOM_MAX}>A+</button>
-          </div>
-        )}
       </header>
       <main className="page">
-        <InstrumentPicker source={source} target={target} onSource={onSource} onTarget={onTarget} hint={sourceHint} />
-        {many && (
-          <label className="picker-one partpick">
-            <span className="muted small">Part</span>
-            <select className="sel" aria-label="Part" value={full ? 'all' : String(myIdx)} onChange={(e) => onPart(e.target.value)}>
-              {parts.map((p, i) => <option key={p.id} value={i}>{p.name}{INSTRUMENTS[p.instrument].clef === 'bass' ? ' (bass clef)' : ''}</option>)}
-              <option value="all">All parts together</option>
-            </select>
-          </label>
-        )}
-        <div className="statusrow">
-          <p className={`pill ${engine}`} data-testid="engine-status" role="status">
-            {engine === 'loading' && <><span className="spinner sm" aria-hidden /> Loading {INSTRUMENTS[target].name} sound…</>}
-            {engine === 'soundfont' && <>Sound: {INSTRUMENTS[target].name} samples</>}
-            {engine !== 'loading' && engine !== 'soundfont' && <>Sound: simple synth (samples unavailable offline)</>}
-          </p>
+        <div className="score-setup">
+          <InstrumentPicker source={source} target={target} onSource={onSource} onTarget={onTarget} hint={sourceHint} />
           {many && (
-            <button type="button" className={`linkbtn mutemine${myMuted ? ' on' : ''}`} aria-pressed={myMuted} onClick={toggleMuteMine}>
-              {myMuted ? 'Unmute my part' : 'Mute my part'}
-            </button>
+            <label className="picker-one partpick">
+              <span className="muted small">Part</span>
+              <select className="sel" aria-label="Part" value={full ? 'all' : String(myIdx)} onChange={(e) => onPart(e.target.value)}>
+                {parts.map((p, i) => <option key={p.id} value={i}>{p.name}{INSTRUMENTS[p.instrument].clef === 'bass' ? ' (bass clef)' : ''}</option>)}
+                <option value="all">All parts together</option>
+              </select>
+            </label>
           )}
-          {engine !== 'loading' && engine !== 'soundfont' && (
-            <button type="button" className="linkbtn" onClick={() => setLoadTry((n) => n + 1)}>Try loading again</button>
-          )}
-          <details className="nosound">
-            <summary>No sound?</summary>
-            <p className="muted small">Turn the volume up with the side buttons. On an iPhone, also flip the ring/silent switch off silent, or use headphones or a speaker. If it still stays quiet, tap Pause, then Play again.</p>
-          </details>
+          <div className="statusrow">
+            <p className={`pill ${engine}`} data-testid="engine-status" role="status">
+              {engine === 'loading' && <><span className="spinner sm" aria-hidden /> Loading {INSTRUMENTS[target].name} sound…</>}
+              {engine === 'soundfont' && <>Sound: {INSTRUMENTS[target].name} samples</>}
+              {engine !== 'loading' && engine !== 'soundfont' && <>Sound: simple synth (samples unavailable offline)</>}
+            </p>
+            {many && (
+              <button type="button" className={`linkbtn mutemine${myMuted ? ' on' : ''}`} aria-pressed={myMuted} onClick={toggleMuteMine}>
+                {myMuted ? 'Unmute my part' : 'Mute my part'}
+              </button>
+            )}
+            {engine !== 'loading' && engine !== 'soundfont' && (
+              <button type="button" className="linkbtn" onClick={() => setLoadTry((n) => n + 1)}>Try loading again</button>
+            )}
+            <details className="nosound">
+              <summary>No sound?</summary>
+              <p className="muted small">Turn the volume up with the side buttons. On an iPhone, also flip the ring/silent switch off silent, or use headphones or a speaker. If it still stays quiet, tap Pause, then Play again.</p>
+            </details>
+          </div>
         </div>
         {blocked && <p className="warnline" role="alert"><AlertIcon size={18} /> Your phone has not let the sound start yet. Tap Play once more.</p>}
         {(error || derived?.err) && <p className="error" role="alert">{error || derived?.err}</p>}
@@ -664,6 +659,13 @@ export default function ScorePage() {
                 <button type="button" role="radio" aria-checked={viewMode === 'twobar'} className={viewMode === 'twobar' ? 'on' : ''} onClick={() => changeView('twobar')}>2 bars</button>
               </div>
             </div>
+            {/* the two bars always fill the screen: there is nothing to make bigger or smaller there */}
+            {viewMode === 'full' && (
+              <div className="zoom" role="group" aria-label="Score size">
+                <button type="button" onClick={() => changeZoom(-ZOOM_STEP)} aria-label="Zoom out" disabled={zoom <= ZOOM_MIN}>A−</button>
+                <button type="button" onClick={() => changeZoom(ZOOM_STEP)} aria-label="Zoom in" disabled={zoom >= ZOOM_MAX}>A+</button>
+              </div>
+            )}
             {viewMode === 'twobar' && <FingerStylePicker value={fingerStyle} onChange={changeFingerStyle} label={fingerWord === 'Slide' ? 'Slide' : 'Fingerings'} slide={target === 'trombone'} />}
           </div>
         )}

@@ -7,7 +7,7 @@ import { canRekey, rekeyXml } from '@/lib/omrNotation';
 import { newId, saveScore, getScore, type SavedScore } from '@/lib/library';
 import { addPartsTo, songPartsOf } from '@/lib/song';
 import { INSTRUMENT_IDS, INSTRUMENTS, type InstrumentId } from '@/lib/instruments';
-import { AlertIcon, CameraIcon, CheckIcon, CloseIcon, FileIcon, RotateIcon } from './Icons';
+import { AlertIcon, CameraIcon, CheckIcon, CloseIcon, FileIcon, MusicIcon, RotateIcon } from './Icons';
 import ScanBarReview from './ScanBarReview';
 import { barsToReview, warningBar } from '@/lib/scanReview';
 import type { BarReadingContext } from '@/lib/omrPrompt';
@@ -221,13 +221,13 @@ export default function Uploader({ addTo }: { addTo?: string }) {
             onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
         </label>
         <label className="btn">
-          Open MusicXML
+          <MusicIcon size={20} /> Open MusicXML
           <input ref={xmlInput} className="sr-only" type="file" accept=".musicxml,.xml,.mxl" data-testid="xml-input" disabled={!!busy}
             onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
         </label>
       </div>
       {items.length === 0 && !busy && !error && (
-        <p className="muted small tip">Lay the page flat in good light, fill the frame, and keep the phone straight above it. One page per photo.</p>
+        <p className="muted small tip">Photograph one page at a time. Keep the sheet flat, well lit, and centered.</p>
       )}
 
       {items.length > 0 && (
@@ -386,7 +386,7 @@ export default function Uploader({ addTo }: { addTo?: string }) {
           <p className="muted small">Read by {review.engine === 'claude' ? 'the main reader' : 'the free reader'}. Reading again uses another scan.</p>
         </div>
       )}
-      <p className="disclaimer">Reading is automatic and can make mistakes. Check the notes against your sheet.</p>
+      {(items.length > 0 || review) && <p className="disclaimer">Check scanned notes against your sheet before practice.</p>}
     </section>
   );
 }
