@@ -246,29 +246,53 @@ function deepBass(tier: Tier, take: number, rate: number): Float32Array {
   return finish(y, rate, 0.85 * TIER_VEL[tier] ** 0.85);
 }
 
+/** One-pole low-pass at `hz` (in place on a copy). */
+function lowpass1(x: Float32Array, rate: number, hz: number): Float32Array {
+  const a = 1 - Math.exp((-TAU * hz) / rate), y = new Float32Array(x.length);
+  let v = 0;
+  for (let i = 0; i < x.length; i++) { v += a * (x[i] - v); y[i] = v; }
+  return y;
+}
+
 /**
  * The tum tum: a drum-kit head (Remo Pinstripe type) pulled tight on an open barrel with the bottom cut out, played
- * with the hand. Soft attack (no stick), little pitch bend (no second head), and a skin that keeps singing after
- * the hit (a short ring sounded like a wood block). Accents add a slap made only of the head's own tones. No noise
- * at all: noise here sounds like snare wires. `middle`: struck in the centre of the skin, so a rounder hit.
+ * with the hand. Chosen by the player by ear ("number 1"): a real skin's in-between modes (one pure tone sounded
+ * hollow and skinny), the palm pushing air into the barrel (a fat low thump), a few milliseconds of dark, fleshy
+ * smack where the hand lands (kept below ~1 kHz: brighter noise sounded like snare wires), a medium ring (a short
+ * one sounded like a wood block, a long one too thin), and a little saturation that thickens the tone.
+ * `middle`: struck in the centre of the skin (beats 1 and 3): lower, rounder, more thump.
  */
 function tumTum(f0: number, peak: number, tier: Tier, take: number, rate: number, middle = false): Float32Array {
   const r = rng(14000 + f0 * 5 + tier * 53 + take * 139);
   const n = Math.round(0.58 * rate);
   const y = new Float32Array(n);
   const tune = 1 + (r() - 0.5) * 0.02 + (take - 1) * 0.015; // two hands, never quite the same spot
-  const f = f0 * tune, dec = 0.22;
-  const slap = middle ? 0.25 : [0.05, 0.12, 0.7][tier];
+  const f = f0 * tune, dec = 0.14;
+  const modes: [number, number, number][] = [[1.59, 0.45, 0.45], [2.14, 0.3, 0.3], [2.3, 0.22, 0.25], [2.65, 0.15, 0.2], [2.92, 0.1, 0.15]];
+  const thump = 0.6 * (middle ? 1.4 : 1);
   for (let i = 0; i < n; i++) {
     const t = i / rate;
-    const ph = TAU * f * (t + 0.08 * 0.015 * (1 - Math.exp(-t / 0.015)));
-    const body = Math.sin(ph) * Math.exp(-t / dec) + 0.22 * Math.sin(1.59 * ph) * Math.exp(-t / (dec * 0.45))
-      + 0.12 * Math.sin(2.14 * ph) * Math.exp(-t / (dec * 0.3))
-      + 0.35 * Math.sin(TAU * f * 0.55 * t) * Math.exp(-t / 0.03); // the palm's thump
-    const pop = (Math.sin(2 * ph) + 0.4 * Math.sin(3 * ph)) * Math.exp(-t / 0.01);
-    y[i] = Math.min(1, t / 0.0025) * (body + slap * 1.2 * pop);
+    const ph = TAU * f * (t + 0.06 * 0.012 * (1 - Math.exp(-t / 0.012)));
+    let v = Math.sin(ph) * Math.exp(-t / dec);
+    for (const [ratio, level, d] of modes) v += level * (middle ? 0.5 : 1) * Math.sin(ratio * ph) * Math.exp(-t / (dec * d));
+    v += thump * (Math.sin(TAU * f * 0.5 * t) * Math.exp(-t / 0.05) + 0.5 * Math.sin(TAU * f * 0.75 * t) * Math.exp(-t / 0.035));
+    y[i] = v;
   }
-  tail(y, rate, 0.15);
+  // the hand landing: noise between ~180 Hz and ~900 Hz, gone in a few milliseconds
+  const w = new Float32Array(n);
+  for (let i = 0; i < n; i++) w[i] = r() * 2 - 1;
+  const hi = lowpass1(w, rate, 900), lo = lowpass1(w, rate, 180);
+  let m = 0;
+  for (let i = 0; i < Math.round(0.01 * rate); i++) m = Math.max(m, Math.abs(hi[i] - lo[i]));
+  const smack = 0.4 * (middle ? 0.6 : [0.4, 0.55, 1][tier]) / (m || 1);
+  for (let i = 0; i < n; i++) {
+    const t = i / rate;
+    y[i] = (y[i] + smack * (hi[i] - lo[i]) * Math.exp(-t / 0.004)) * Math.min(1, t / 0.0015);
+  }
+  normalise(y, 1);
+  const sat = 1.6;
+  for (let i = 0; i < n; i++) y[i] = Math.tanh(sat * y[i]) / Math.tanh(sat);
+  tail(y, rate, 0.08);
   return finish(y, rate, peak * TIER_VEL[tier]);
 }
 
@@ -284,7 +308,7 @@ export function renderKit(inst: KitInst, tier: Tier, take: number, rate: number)
     case 'cymbal': return cymbal(tier, k, rate);
     case 'jkBass': return deepBass(tier, k, rate);
     case 'tumHi': return tumTum(460, 0.46, tier, k, rate);
-    case 'tumLo': return tumTum(330, 0.4, tier, k, rate);
+    case 'tumLo': return tumTum(330, 0.34, tier, k, rate);
     case 'tumMid': return tumTum(460 * 0.88, 0.46, tier, k, rate, true);
   }
 }
