@@ -110,8 +110,13 @@ describe('starter kit sounds (rendered samples)', () => {
     expect(note(hi)).toBeLessThan(490);
     expect(note(lo)).toBeGreaterThan(300);
     expect(note(lo)).toBeLessThan(360);
+    const mid = note(renderKit('tumMid', 2, 1, RATE));
+    expect(mid).toBeGreaterThan(note(lo));
+    expect(mid).toBeLessThan(note(hi) * 0.95); // the middle of the skin is deeper than the edge
+    // the skin keeps singing (a short ring sounded like a wood block)
+    expect(ringS(hi)).toBeGreaterThan(0.3);
     // pure tones: almost nothing above 3 kHz, where snare-wire buzz lives
-    for (const y of [hi, renderKit('tumHi', 2, 0, RATE), renderKit('jkBass', 2, 0, RATE)]) {
+    for (const y of [hi, renderKit('tumHi', 2, 0, RATE), renderKit('tumMid', 2, 0, RATE), renderKit('jkBass', 2, 0, RATE)]) {
       const sp = spectrum(y, RATE, 0, Math.round(0.05 * RATE));
       const high = sp.filter(([f]) => f > 3000).reduce((a, [, m]) => a + m * m, 0), all = sp.reduce((a, [, m]) => a + m * m, 0);
       expect(high / all).toBeLessThan(0.01);

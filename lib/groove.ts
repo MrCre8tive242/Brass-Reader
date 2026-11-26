@@ -5,7 +5,7 @@ export type Feel = 'straight' | 'triplet';
 
 // ---------- the starter kit ----------
 
-export type KitInst = 'bass' | 'lead' | 'cowHi' | 'cowLo' | 'whistle' | 'cymbal' | 'jkBass' | 'tumHi' | 'tumLo';
+export type KitInst = 'bass' | 'lead' | 'cowHi' | 'cowLo' | 'whistle' | 'cymbal' | 'jkBass' | 'tumHi' | 'tumLo' | 'tumMid';
 export const KIT_INSTS: { id: KitInst; label: string; gm: number }[] = [
   { id: 'bass', label: 'Bass drum', gm: 36 },
   { id: 'lead', label: 'Lead drum', gm: 47 },
@@ -17,6 +17,7 @@ export const KIT_INSTS: { id: KitInst; label: string; gm: number }[] = [
   { id: 'jkBass', label: 'Deep bass drum', gm: 35 },
   { id: 'tumHi', label: 'Tum tum high', gm: 63 },
   { id: 'tumLo', label: 'Tum tum low', gm: 64 },
+  { id: 'tumMid', label: 'Tum tum middle', gm: 62 },
 ];
 const GM_OF = Object.fromEntries(KIT_INSTS.map((k) => [k.id, k.gm])) as Record<KitInst, number>;
 
@@ -99,7 +100,8 @@ export const STARTERS: { id: string; name: string; pattern: KitPattern; traditio
     pattern: named({
       cymbal: '..X...X...X...X.',
       jkBass: 'X.....x.X.....x.',
-      tumHi: 'X.xxX.xxXxxxX.xx',
+      tumHi: '..xxX.xx.xxxX.xx',
+      tumMid: 'X.......X.......', // beats 1 and 3, under the bass drum's quarter notes: hit in the middle of the skin, deeper
       tumLo: 'x..x..x.x..x..x.',
     }),
   },

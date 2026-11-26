@@ -116,8 +116,9 @@ describe('step grid', () => {
     expect(at('cymbal')).toEqual([0.5, 1.5, 2.5, 3.5]); // the off-beats
     expect(at('jkBass')).toEqual([0, 1.5, 2, 3.5]); // BOOM . . ka BOOM . . ka
     expect(grooveBarHits(g, 0).filter((h) => h.inst === 'jkBass' && h.vel === 1).map((h) => h.timeQ)).toEqual([0, 2]);
-    expect(grooveBarHits(g, 0).filter((h) => h.inst === 'tumHi' && h.vel === 1).map((h) => h.timeQ)).toEqual([0, 1, 2, 3]);
-    expect(at('tumHi')).toHaveLength(13);
+    expect(grooveBarHits(g, 0).filter((h) => h.inst === 'tumHi' && h.vel === 1).map((h) => h.timeQ)).toEqual([1, 3]);
+    expect(at('tumHi')).toHaveLength(11);
+    expect(at('tumMid')).toEqual([0, 2]); // deeper, in the middle of the skin, with the bass drum's quarter notes
     expect(at('tumLo')).toEqual([0, 0.75, 1.5, 2, 2.75, 3.5]);
     for (const k of ['bass', 'lead', 'cowHi', 'cowLo', 'whistle']) expect(at(k)).toEqual([]);
     expect(starterGroove('starter-a')!.traditional).toBeUndefined();

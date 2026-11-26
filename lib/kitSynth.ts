@@ -247,25 +247,28 @@ function deepBass(tier: Tier, take: number, rate: number): Float32Array {
 }
 
 /**
- * The tum tum: a drum-kit head (Remo Pinstripe type: two plies, few overtones) on an open barrel with the bottom cut
- * out, played with the hand. Soft attack (no stick), little pitch bend (no second head), a fat short tone, and on
- * accents a slap made only of the head's own tones. No noise at all: noise here sounds like snare wires.
+ * The tum tum: a drum-kit head (Remo Pinstripe type) pulled tight on an open barrel with the bottom cut out, played
+ * with the hand. Soft attack (no stick), little pitch bend (no second head), and a skin that keeps singing after
+ * the hit (a short ring sounded like a wood block). Accents add a slap made only of the head's own tones. No noise
+ * at all: noise here sounds like snare wires. `middle`: struck in the centre of the skin, so a rounder hit.
  */
-function tumTum(f0: number, peak: number, tier: Tier, take: number, rate: number): Float32Array {
+function tumTum(f0: number, peak: number, tier: Tier, take: number, rate: number, middle = false): Float32Array {
   const r = rng(14000 + f0 * 5 + tier * 53 + take * 139);
-  const n = Math.round(0.3 * rate);
+  const n = Math.round(0.58 * rate);
   const y = new Float32Array(n);
   const tune = 1 + (r() - 0.5) * 0.02 + (take - 1) * 0.015; // two hands, never quite the same spot
-  const f = f0 * tune, dec = 0.07;
-  const slap = [0.05, 0.12, 0.7][tier];
+  const f = f0 * tune, dec = 0.22;
+  const slap = middle ? 0.25 : [0.05, 0.12, 0.7][tier];
   for (let i = 0; i < n; i++) {
     const t = i / rate;
     const ph = TAU * f * (t + 0.08 * 0.015 * (1 - Math.exp(-t / 0.015)));
-    const body = Math.sin(ph) * Math.exp(-t / dec) + 0.18 * Math.sin(1.59 * ph) * Math.exp(-t / (dec * 0.4))
+    const body = Math.sin(ph) * Math.exp(-t / dec) + 0.22 * Math.sin(1.59 * ph) * Math.exp(-t / (dec * 0.45))
+      + 0.12 * Math.sin(2.14 * ph) * Math.exp(-t / (dec * 0.3))
       + 0.35 * Math.sin(TAU * f * 0.55 * t) * Math.exp(-t / 0.03); // the palm's thump
     const pop = (Math.sin(2 * ph) + 0.4 * Math.sin(3 * ph)) * Math.exp(-t / 0.01);
     y[i] = Math.min(1, t / 0.0025) * (body + slap * 1.2 * pop);
   }
+  tail(y, rate, 0.15);
   return finish(y, rate, peak * TIER_VEL[tier]);
 }
 
@@ -282,5 +285,6 @@ export function renderKit(inst: KitInst, tier: Tier, take: number, rate: number)
     case 'jkBass': return deepBass(tier, k, rate);
     case 'tumHi': return tumTum(460, 0.46, tier, k, rate);
     case 'tumLo': return tumTum(330, 0.4, tier, k, rate);
+    case 'tumMid': return tumTum(460 * 0.88, 0.46, tier, k, rate, true);
   }
 }

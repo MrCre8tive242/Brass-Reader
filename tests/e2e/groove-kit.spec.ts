@@ -37,6 +37,7 @@ test.describe('D2. starter kit', () => {
     await expect(page.getByRole('button', { name: 'Cymbals step 3: accent', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Deep bass drum step 1: accent', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Tum tum high step 3: on', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Tum tum middle step 1: accent', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Back to grooves' }).click();
     await page.getByRole('button', { name: 'Close grooves' }).click();
     await page.getByLabel('Groove', { exact: true }).selectOption({ label: 'Junkanoo' });
@@ -136,7 +137,7 @@ test.describe('D2. starter kit', () => {
     await page.getByLabel('Preview tempo BPM').blur();
     await page.getByRole('button', { name: 'Hear the pattern' }).click();
     await expect(page.locator('.cell.now').first()).toBeVisible();
-    await expect(page.locator('.cell.now')).toHaveCount(9); // one step of every instrument
+    await expect(page.locator('.cell.now')).toHaveCount(10); // one step of every instrument
     const col = async () => page.locator('.kitrow').first().locator('.cell').evaluateAll((els) => els.findIndex((e) => e.classList.contains('now')));
     const seen = new Set<number>();
     for (let i = 0; i < 25; i++) { seen.add(await col()); await page.waitForTimeout(60); }
