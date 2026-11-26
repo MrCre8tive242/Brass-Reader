@@ -1,9 +1,9 @@
 # Brass Reader — Handoff
 
-Start a fresh chat with: "Read brass-reader/HANDOFF.md and continue." Sonnet is enough for most fixes. Use Opus only for planning a new feature.
+Start a fresh chat with: "Read HANDOFF.md and continue." Sonnet is enough for most fixes. Use Opus only for planning a new feature.
 
 ## What it is
-- A Next.js + TypeScript app in `brass-reader/`, in the repo MrCre8tive242/Main-chat, on branch `ccr-4bbe3223-t2kgyf` (PR #29, draft).
+- A Next.js + TypeScript app in its own repo, MrCre8tive242/brass-reader (branch `main`). It was moved out of Main-chat (old PRs #29/#30 there).
 - Live at https://brass-reader.vercel.app.
 - The user is a Junkanoo brass player who mostly uses a phone. Answer in plain words and keep answers short.
 
@@ -31,7 +31,7 @@ Start a fresh chat with: "Read brass-reader/HANDOFF.md and continue." Sonnet is 
 2. Call `create_deployment` with:
    - teamId `team_vrIkDviVBbFJerbCSm6AoYK6`
    - `skipAutoDetectionConfirmation: "1"`
-   - requestBody: `{name/project:"brass-reader", target:"production", gitSource:{type:"github", org:"MrCre8tive242", repo:"Main-chat", ref:"ccr-4bbe3223-t2kgyf", sha:<commit>}, projectSettings:{framework:"nextjs", rootDirectory:"brass-reader"}}`
+   - requestBody: `{name/project:"brass-reader", target:"production", gitSource:{type:"github", org:"MrCre8tive242", repo:"brass-reader", ref:"main", sha:<commit>}}` (the project root directory is now empty: the app is at the repo root)
 3. Smoke test: `GET /api/omr` should return `{"claude":true,"passcode":true}`.
 4. The Vercel env vars (ANTHROPIC_API_KEY, APP_PASSCODE) are already set; there's no key in the cloud container.
 5. The user does NOT want preview links, because they need the env vars. Deploy straight to production after the tests pass.
@@ -41,7 +41,6 @@ Start a fresh chat with: "Read brass-reader/HANDOFF.md and continue." Sonnet is 
 - `npm run e2e -- --trace off`: Playwright, 144 tests. Chromium is preinstalled; never run `playwright install`.
 - `npm run build`
 - All green at commit 0284272.
-- The `margin-writing-coach` Vercel failures on the PR belong to another project. Ignore them; they were already commented on once.
 
 ## Waiting on the user (untested here)
 - Re-scan "Juicy Suzzi" (a dense bass-clef baritone page) with the new strip reading. Before: 70 s and 8 "not sure" bars, mostly chords, plus bars 24–25 hidden by a "101%" zoom bubble in the screenshot.
