@@ -1,7 +1,7 @@
 import { validateMusicXml } from './musicxml';
 import { extractXml, retryPrompt, fixBarsPrompt, cleanPartHint, NOT_MUSIC, type BarProblem, type OmrHints } from './omrPrompt';
 import { analyseAndRepair, type RepairResult } from './repair';
-import { parseNotation, notationToMusicXml, mergeCorrections, mergeStripReadings, barCount, type NScore } from './omrNotation';
+import { parseNotation, notationToMusicXml, mergeCorrections, mergeStripReadings, barCount, parseClef, parseTime, type NScore } from './omrNotation';
 import { isInstrumentId } from './instruments';
 
 /** Thrown by `callClaude` when the model hit its output limit (the reading is cut off and cannot be used). */
@@ -104,7 +104,7 @@ export function readOptions(body: { tiles?: unknown; hints?: unknown }, imageCou
   const hints: OmrHints = {};
   if (body.hints !== undefined) {
     if (!body.hints || typeof body.hints !== 'object' || Array.isArray(body.hints)) return 'hints must be an object.';
-    const h = body.hints as { instrument?: unknown; part?: unknown };
+    const h = body.hints as { instrument?: unknown; part?: unknown; bar?: unknown };
     if (h.instrument !== undefined && h.instrument !== null) {
       if (!isInstrumentId(h.instrument)) return 'Unknown instrument in hints.';
       hints.instrument = h.instrument;
@@ -113,6 +113,15 @@ export function readOptions(body: { tiles?: unknown; hints?: unknown }, imageCou
       if (typeof h.part !== 'string' || h.part.length > 200) return 'hints.part must be a short text.';
       const part = cleanPartHint(h.part);
       if (part) hints.part = part;
+    }
+    if (h.bar !== undefined) {
+      if (imageCount !== 1 || !h.bar || typeof h.bar !== 'object' || Array.isArray(h.bar)) return 'A bar retry requires one cropped image and its score context.';
+      const bar = h.bar as Record<string, unknown>;
+      const clef = typeof bar.clef === 'string' && bar.clef.length <= 8 ? parseClef(bar.clef) : null;
+      const fifths = bar.fifths;
+      const time = typeof bar.beats === 'number' && typeof bar.beatType === 'number' ? parseTime(`${bar.beats}/${bar.beatType}`) : null;
+      if (!clef || !time || typeof fifths !== 'number' || !Number.isInteger(fifths) || Math.abs(fifths) > 7) return 'Invalid clef, key or time for the bar retry.';
+      hints.bar = { clef, fifths, beats: time.beats, beatType: time.beatType };
     }
   }
   return { tiles, hints };

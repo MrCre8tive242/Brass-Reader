@@ -77,6 +77,15 @@ export interface OmrHints {
   instrument?: InstrumentId;
   /** Name of the one part to read on a page with several staves. */
   part?: string;
+  /** The score context for one cropped measure without a printed header. */
+  bar?: BarReadingContext;
+}
+
+export interface BarReadingContext {
+  clef: string;
+  fifths: number;
+  beats: number;
+  beatType: number;
 }
 
 /** Keep only harmless characters of a free-text hint (it is quoted inside the prompt). */
@@ -129,6 +138,11 @@ export function partPrompt(index: number, count: number, hints: OmrHints = {}): 
 }
 
 export function userPrompt(pageCount: number, hints: OmrHints = {}): string {
+  if (hints.bar) {
+    const { clef, fifths, beats, beatType } = hints.bar;
+    const key = fifths === 0 ? '0' : `${Math.abs(fifths)}${fifths < 0 ? 'b' : '#'}`;
+    return `The image is a crop of one complete measure on one staff. Read only that measure as bar 1. Use headers clef: ${clef}, key: ${key}, time: ${beats}/${beatType}. These are the signatures in force for the crop. Include every note, printed accidental and rest. Do not invent music outside the crop or fill missing notes. If unsure, include a "? 1:" warning. Reply with the transcription only.`;
+  }
   const lines: string[] = [];
   lines.push(pageCount > 1
     ? `These are ${pageCount} consecutive pages of one piece. Read all of them into one transcription with continuous bar numbers.`

@@ -41,6 +41,7 @@ import { buildDrumEvents, starterGrooves, type Groove } from '@/lib/groove';
 import { getGroove, listGrooves } from '@/lib/grooveStore';
 import { LoopIcon } from '@/components/Icons';
 import { DEFAULT_TRAINER, loopQ, normalizeLoop, normalizeTrainer, passLabel, type LoopRange, type Trainer } from '@/lib/loop';
+import { PRACTICE_SAMPLE_ID, readPracticeProgress, rememberPractice } from '@/lib/practiceProgress';
 
 const ZOOM_MIN = 0.6, ZOOM_MAX = 2.2, ZOOM_STEP = 0.15;
 
@@ -104,6 +105,14 @@ export default function ScorePage() {
   const [videoOpen, setVideoOpen] = useState(false);
   const [fingerStyle, setFingerStyle] = useState<FingerStyle>(DEFAULT_FINGER_STYLE);
   const measureRef = useRef(1);
+  const progressRef = useRef<{ id: string; measure: number | null; labels: string[] } | null>(null);
+  const savePosition = useCallback((m: number) => {
+    const progress = progressRef.current;
+    if (progress && m !== progress.measure) {
+      progress.measure = m;
+      rememberPractice(progress.id, m, progress.labels[m - 1] ?? String(m));
+    }
+  }, []);
 
   useEffect(() => {
     const z = Number(lsGet('brass-reader:zoom'));
@@ -115,7 +124,8 @@ export default function ScorePage() {
 
   useEffect(() => {
     let alive = true;
-    getScore(id).then((s) => {
+    const loading = id === PRACTICE_SAMPLE_ID ? import('@/lib/practiceSample').then((m) => m.practiceSample()) : getScore(id);
+    loading.then((s) => {
       if (!alive) return;
       setScore(s ?? null);
       if (s) {
@@ -132,7 +142,7 @@ export default function ScorePage() {
         // the tempo you last used wins; otherwise the metronome mark printed on the music, if it was read
         const printed = summariseScore(s.sourceXml).tempo;
         if (b >= 30 && b <= 240) setBpm(b);
-        else if (printed && printed >= 30 && printed <= 240) setBpm(printed);
+        else setBpm(printed && printed >= 30 && printed <= 240 ? printed : 100);
         setLoop(s.loop ?? null);
         setShifts(s.octaveShifts ?? []);
         if (s.loop) setLoopDraft(s.loop);
@@ -189,7 +199,10 @@ export default function ScorePage() {
     const p = new Player(ctx);
     p.onState = (v) => {
       setPlaying(v);
-      if (v) setBlocked(false);
+      if (v) {
+        setBlocked(false);
+        savePosition(p.measure);
+      }
       // the speed trainer changed the tempo while it ran: when the music stops, the tempo you chose comes back
       else if (trainerBase.current !== null) { setBpm(trainerBase.current); trainerBase.current = null; }
     };
@@ -204,6 +217,7 @@ export default function ScorePage() {
       view.current?.setPosition(q, m, off);
       bars.current?.setPosition(q, m, off);
       if (m !== measureRef.current) { measureRef.current = m; setMeasure(m); }
+      if (p.isPlaying) savePosition(m);
     };
     player.current = p;
     // leaving the tab or locking the phone stops the music (the phone suspends the audio anyway)
@@ -215,7 +229,7 @@ export default function ScorePage() {
       player.current = null;
       try { void ctx.close(); } catch { /* ignore */ }
     };
-  }, []);
+  }, [savePosition]);
 
   // keep the screen on while the score is open (a phone on a music stand must not dim mid-tune)
   useEffect(() => {
@@ -250,11 +264,19 @@ export default function ScorePage() {
   const getPlayer = useCallback(() => player.current, []);
 
   useEffect(() => {
-    if (derived?.tl && player.current) {
-      player.current.setTimeline(derived.tl);
-      if (measureRef.current > derived.tl.measureCount) { measureRef.current = 1; setMeasure(1); }
+    const p = player.current;
+    const tl = derived?.tl;
+    if (!p || !tl || score?.id !== id) return;
+    const firstTimeline = progressRef.current?.id !== id;
+    if (firstTimeline) progressRef.current = null;
+    p.setTimeline(tl);
+    if (firstTimeline) {
+      const last = readPracticeProgress(id);
+      const resume = new URLSearchParams(window.location.search).get('resume') === '1';
+      if (resume && last && last.measure <= tl.measureCount) p.seek(last.measure);
     }
-  }, [derived]);
+    progressRef.current = { id, measure: progressRef.current?.measure ?? null, labels: tl.barLabels };
+  }, [derived, id, score?.id]);
 
   bpmNow.current = bpm;
   useEffect(() => { player.current?.setBpm(bpm); }, [bpm]);
@@ -308,7 +330,13 @@ export default function ScorePage() {
     changeLoop(null);
     say(`Left the loop (bars ${l.from}–${l.to}): you moved to bar ${m}. Press and hold a bar to loop again.`);
   }, [changeLoop, say]);
-  const seekGuarded = useCallback((m: number) => { player.current?.seek(m); leaveLoopIfOutside(m); }, [leaveLoopIfOutside]);
+  const seekGuarded = useCallback((m: number) => {
+    const p = player.current;
+    if (!p) return;
+    p.seek(m);
+    savePosition(p.measure);
+    leaveLoopIfOutside(m);
+  }, [leaveLoopIfOutside, savePosition]);
   // persist only on user changes (writing from an effect would overwrite the stored value with the default before it is read)
   const changeBpm = useCallback((n: number) => { trainerBase.current = null; setBpm(n); lsSet(`bpm:${id}`, String(n)); }, [id]);
   useEffect(() => { if (player.current) player.current.metronome = metronome; }, [metronome]);
@@ -432,8 +460,9 @@ export default function ScorePage() {
     const p = player.current;
     if (!p || !p.measureCount) return;
     p.stepBar(delta);
+    savePosition(p.measure);
     leaveLoopIfOutside(p.measure);
-  }, [leaveLoopIfOutside]);
+  }, [leaveLoopIfOutside, savePosition]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -626,6 +655,18 @@ export default function ScorePage() {
             </div>
           )
           : !loopHintSeen && derived && !derived.err && <p className="muted small loophint" data-testid="loop-hint">Tip: press and hold a bar to loop it (drag with a mouse). More loop tools are in Practice.</p>}
+        {derived && !derived.err && (
+          <div className="viewbar" data-testid="viewbar">
+            <div className="seg-wrap">
+              <span className="seg-label">View</span>
+              <div className="seg" role="radiogroup" aria-label="View" data-testid="view-toggle">
+                <button type="button" role="radio" aria-checked={viewMode === 'full'} className={viewMode === 'full' ? 'on' : ''} onClick={() => changeView('full')}>Full sheet</button>
+                <button type="button" role="radio" aria-checked={viewMode === 'twobar'} className={viewMode === 'twobar' ? 'on' : ''} onClick={() => changeView('twobar')}>2 bars</button>
+              </div>
+            </div>
+            {viewMode === 'twobar' && <FingerStylePicker value={fingerStyle} onChange={changeFingerStyle} label={fingerWord === 'Slide' ? 'Slide' : 'Fingerings'} slide={target === 'trombone'} />}
+          </div>
+        )}
         {derived && !derived.err && viewMode === 'twobar' && derived.tl && (
           <TwoBarView
             ref={bars}
@@ -661,18 +702,6 @@ export default function ScorePage() {
             onReady={() => { setScoreReady(true); resyncView(); }}
             onError={setError}
           />
-        )}
-        {derived && !derived.err && (
-          <div className="viewbar" data-testid="viewbar">
-            <div className="seg-wrap">
-              <span className="seg-label">View</span>
-              <div className="seg" role="radiogroup" aria-label="View" data-testid="view-toggle">
-                <button type="button" role="radio" aria-checked={viewMode === 'full'} className={viewMode === 'full' ? 'on' : ''} onClick={() => changeView('full')}>Full sheet</button>
-                <button type="button" role="radio" aria-checked={viewMode === 'twobar'} className={viewMode === 'twobar' ? 'on' : ''} onClick={() => changeView('twobar')}>2 bars</button>
-              </div>
-            </div>
-            {viewMode === 'twobar' && <FingerStylePicker value={fingerStyle} onChange={changeFingerStyle} label={fingerWord === 'Slide' ? 'Slide' : 'Fingerings'} slide={target === 'trombone'} />}
-          </div>
         )}
         <p className="disclaimer">Reading is automatic and can make mistakes. Check the notes against your sheet.</p>
         <Downloads

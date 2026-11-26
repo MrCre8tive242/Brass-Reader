@@ -8,6 +8,9 @@ import { newId, saveScore, getScore, type SavedScore } from '@/lib/library';
 import { addPartsTo, songPartsOf } from '@/lib/song';
 import { INSTRUMENT_IDS, INSTRUMENTS, type InstrumentId } from '@/lib/instruments';
 import { AlertIcon, CameraIcon, CheckIcon, CloseIcon, FileIcon, RotateIcon } from './Icons';
+import ScanBarReview from './ScanBarReview';
+import { barsToReview, warningBar } from '@/lib/scanReview';
+import type { BarReadingContext } from '@/lib/omrPrompt';
 
 interface Item { key: string; file: File; url: string | null; rotate: number }
 interface Review {
@@ -17,6 +20,7 @@ interface Review {
   flags: OmrFlag[];
   summary: ScoreSummary;
   title: string;
+  pageCount: number;
   /** Chosen part, or 'all'. */
   part: number | 'all';
 }
@@ -44,12 +48,15 @@ export default function Uploader({ addTo }: { addTo?: string }) {
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<{ message: string; code: string } | null>(null);
   const [review, setReview] = useState<Review | null>(null);
+  const [checking, setChecking] = useState<{ label: string; measure: number } | null>(null);
+  const [applied, setApplied] = useState<string | null>(null);
   const [caps, setCaps] = useState<{ audiveris: boolean; passcode: boolean } | null>(null);
   const [passcode, setPass] = useState('');
   const [hasStored, setHasStored] = useState(true);
   const xmlInput = useRef<HTMLInputElement>(null);
   const urls = useRef<string[]>([]);
   const reviewRef = useRef<HTMLDivElement>(null);
+  const scanFiles = useMemo(() => items.map(({ file, rotate }) => ({ file, rotate })), [items]);
 
   useEffect(() => () => urls.current.forEach((u) => URL.revokeObjectURL(u)), []);
   useEffect(() => { setHasStored(!!getPasscode()); }, []);
@@ -63,7 +70,8 @@ export default function Uploader({ addTo }: { addTo?: string }) {
     const t = setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 1000);
     return () => clearInterval(t);
   }, [busy]);
-  useEffect(() => { if (review) reviewRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }, [review]);
+  const reviewOpen = !!review;
+  useEffect(() => { if (reviewOpen) reviewRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }, [reviewOpen]);
 
   async function save(xml: string, title: string, origin: 'scan' | 'musicxml', extra: { flags?: OmrFlag[]; partIndex?: number | null } = {}) {
     if (addTo) {
@@ -127,14 +135,14 @@ export default function Uploader({ addTo }: { addTo?: string }) {
   const remove = (key: string) => { setItems((c) => c.filter((x) => x.key !== key)); setReview(null); };
 
   async function read(engine: 'auto' | 'audiveris' = 'auto') {
-    setError(null); setReview(null);
+    setError(null); setReview(null); setApplied(null);
     if (caps?.passcode && !hasStored) {
       if (!passcode.trim()) { setError({ message: 'Enter the passcode first.', code: 'unauthorized' }); return; }
       setPasscode(passcode.trim()); setHasStored(true);
     }
     try {
       setBusy('Preparing the pages…');
-      const p = await prepareFiles(items.map((i) => ({ file: i.file, rotate: i.rotate })), setBusy);
+      const p = await prepareFiles(scanFiles, setBusy);
       if (p.kind === 'musicxml') { await save(p.xml, titleFromName(items[0].file.name), 'musicxml'); return; }
       const several = p.images.length >= 2 && p.images.length <= 8 && !partHint.trim();
       setBusy(engine === 'audiveris' ? 'Reading with the free reader…' : several ? `Reading ${p.images.length} parts of the page at once…` : 'Reading the music…');
@@ -142,13 +150,29 @@ export default function Uploader({ addTo }: { addTo?: string }) {
       const r = await callOmr({ images: p.images, tiles: p.tiles, hints }, engine);
       const summary = summariseScore(r.musicxml);
       const t = summary.title === 'Untitled score' ? titleFromName(items[0].file.name) : summary.title;
-      setReview({ xml: r.musicxml, engine: r.engine, warnings: r.warnings ?? [], flags: r.flags ?? [], summary, title: t, part: 0 });
+      setReview({ xml: r.musicxml, engine: r.engine, warnings: r.warnings ?? [], flags: r.flags ?? [], summary, title: t, part: 0, pageCount: p.tiles.length });
       setBusy(null);
     } catch (e) {
       const err = e as OmrError;
       if (err.code === 'unauthorized') { setHasStored(false); setPass(''); }
       setError({ message: err.message || 'Reading failed.', code: err.code ?? 'error' });
       setBusy(null);
+    }
+  }
+
+  async function retryBar(image: string, context: BarReadingContext) {
+    if (caps?.passcode && !getPasscode()) {
+      if (!passcode.trim()) throw new Error('Close this review and enter the passcode to retry the bar.');
+      setPasscode(passcode.trim());
+      setHasStored(true);
+    }
+    try { return await callOmr({ images: [image], hints: { bar: context } }, 'claude'); }
+    catch (e) {
+      if (e instanceof OmrError && e.code === 'unauthorized') {
+        setHasStored(false); setPass('');
+        throw new Error(`${e.message} Close this review to enter the passcode.`);
+      }
+      throw e;
     }
   }
 
@@ -165,6 +189,11 @@ export default function Uploader({ addTo }: { addTo?: string }) {
 
   const hasPdfOnly = items.length > 0 && items.every((i) => !i.url);
   const shown = review ? (review.part === 'all' ? review.summary.parts[0] : review.summary.parts[review.part]) : undefined;
+  const flaggedBars = useMemo(() => {
+    if (!review || review.part === 'all') return [];
+    const labels = [...review.flags.map((flag) => flag.bar), ...review.warnings.flatMap((warning) => warningBar(warning) ?? [])];
+    return labels.length ? barsToReview(review.xml, review.part, labels) : [];
+  }, [review]);
   const mismatch = useMemo(() => {
     if (!shown || source === 'auto' || !shown.clef) return null;
     const want = INSTRUMENTS[source].clef;
@@ -183,17 +212,17 @@ export default function Uploader({ addTo }: { addTo?: string }) {
       <div className="actions">
         <label className="btn primary big">
           <CameraIcon /> Take a photo
-          <input className="sr-only" type="file" accept="image/*" capture="environment" data-testid="photo-input"
+          <input className="sr-only" type="file" accept="image/*" capture="environment" data-testid="photo-input" disabled={!!busy}
             onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
         </label>
         <label className="btn">
           <FileIcon size={20} /> Photos or PDF
-          <input className="sr-only" type="file" multiple accept="image/*,application/pdf,.pdf" data-testid="file-input"
+          <input className="sr-only" type="file" multiple accept="image/*,application/pdf,.pdf" data-testid="file-input" disabled={!!busy}
             onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
         </label>
         <label className="btn">
           Open MusicXML
-          <input ref={xmlInput} className="sr-only" type="file" accept=".musicxml,.xml,.mxl" data-testid="xml-input"
+          <input ref={xmlInput} className="sr-only" type="file" accept=".musicxml,.xml,.mxl" data-testid="xml-input" disabled={!!busy}
             onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
         </label>
       </div>
@@ -211,19 +240,19 @@ export default function Uploader({ addTo }: { addTo?: string }) {
                     ? <img src={it.url} alt={`Page ${i + 1}`} className={it.rotate % 2 ? 'side' : ''} style={{ transform: `rotate(${it.rotate * 90}deg)` }} />
                     : <div className="pdfbox" aria-label={`PDF ${it.file.name}`}><FileIcon size={28} />PDF<span>{it.file.name.slice(0, 18)}</span></div>}
                   <span className="pageno">{i + 1}</span>
-                  {it.url && <button type="button" className="rot" onClick={() => rotate(it.key)} aria-label={`Rotate page ${i + 1}`}><RotateIcon size={20} /></button>}
+                  {it.url && <button type="button" className="rot" disabled={!!busy} onClick={() => rotate(it.key)} aria-label={`Rotate page ${i + 1}`}><RotateIcon size={20} /></button>}
                 </div>
                 <div className="tb">
-                  <button type="button" onClick={() => move(i, -1)} disabled={i === 0} aria-label={`Move page ${i + 1} earlier`}>‹</button>
-                  <button type="button" onClick={() => remove(it.key)} aria-label={`Remove page ${i + 1}`}><CloseIcon size={18} /></button>
-                  <button type="button" onClick={() => move(i, 1)} disabled={i === items.length - 1} aria-label={`Move page ${i + 1} later`}>›</button>
+                  <button type="button" onClick={() => move(i, -1)} disabled={!!busy || i === 0} aria-label={`Move page ${i + 1} earlier`}>‹</button>
+                  <button type="button" onClick={() => remove(it.key)} disabled={!!busy} aria-label={`Remove page ${i + 1}`}><CloseIcon size={18} /></button>
+                  <button type="button" onClick={() => move(i, 1)} disabled={!!busy || i === items.length - 1} aria-label={`Move page ${i + 1} later`}>›</button>
                 </div>
               </div>
             ))}
           </div>
           <label className="picker-one">
             <span className="muted small">This music is written for (if unsure, leave it: bass clef is read as trombone, treble as trumpet)</span>
-            <select value={source} onChange={(e) => setSource(e.target.value as InstrumentId | 'auto')} aria-label="Scan is written for" className="sel">
+            <select value={source} disabled={!!busy} onChange={(e) => setSource(e.target.value as InstrumentId | 'auto')} aria-label="Scan is written for" className="sel">
               <option value="auto">Detect from the music</option>
               {INSTRUMENT_IDS.map((id) => <option key={id} value={id}>{INSTRUMENTS[id].name}</option>)}
             </select>
@@ -232,7 +261,7 @@ export default function Uploader({ addTo }: { addTo?: string }) {
             <summary>The page shows several instruments</summary>
             <label className="picker-one">
               <span className="muted small">Only read this part (the name printed at the staff, for example Trumpet 2). Leave empty to read them all and choose afterwards.</span>
-              <input className="sel" type="text" maxLength={40} value={partHint} onChange={(e) => setPartHint(e.target.value)} aria-label="Only read this part" placeholder="Trumpet 2" autoComplete="off" />
+              <input className="sel" type="text" maxLength={40} value={partHint} disabled={!!busy} onChange={(e) => setPartHint(e.target.value)} aria-label="Only read this part" placeholder="Trumpet 2" autoComplete="off" />
             </label>
           </details>
           {caps?.passcode && !hasStored && (
@@ -319,6 +348,36 @@ export default function Uploader({ addTo }: { addTo?: string }) {
             </div>
           ) : (
             <p className="okline" data-testid="review-ok"><CheckIcon size={18} /> Every bar adds up. Still check the notes against your sheet.</p>
+          )}
+          {review.part === 'all' && review.summary.parts.length > 1 && (review.warnings.length > 0 || review.flags.length > 0) && (
+            <p className="muted small">Choose a part to compare its flagged bars with the original page.</p>
+          )}
+          {flaggedBars.length > 0 && (
+            <div className="row" aria-label="Compare flagged bars">
+              {flaggedBars.map((bar) => (
+                <button type="button" className="btn" key={bar.measure} disabled={!!busy} onClick={() => setChecking(bar)}>
+                  {bar.label === 'Pickup' ? 'Check pickup bar' : `Check bar ${bar.label}`}
+                </button>
+              ))}
+            </div>
+          )}
+          {applied && <p className="okline" role="status">{applied}</p>}
+          {checking && review.part !== 'all' && (
+            <ScanBarReview xml={review.xml} measure={checking.measure} label={checking.label}
+              part={review.part} files={scanFiles} pageCount={review.pageCount}
+              retry={review.engine === 'claude' ? retryBar : undefined}
+              onClose={() => setChecking(null)}
+              onApply={(xml) => {
+                const single = review.summary.parts.length === 1;
+                setReview({
+                  ...review, xml, summary: summariseScore(xml),
+                  flags: single ? review.flags.filter((flag) => flag.bar !== checking.label) : review.flags,
+                  warnings: single ? review.warnings.filter((warning) => warningBar(warning) !== checking.label) : review.warnings,
+                });
+                setApplied(`Bar ${checking.label} updated.`);
+                setChecking(null);
+              }}
+            />
           )}
           <div className="row">
             <button type="button" className="btn primary big" onClick={openReviewed} disabled={!!busy}>Open score</button>

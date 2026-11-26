@@ -70,12 +70,16 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 .chev { color: var(--muted); flex: 0 0 auto; }
 .confirm { display: flex; gap: 6px; align-items: center; }
 .confirm .btn { padding: 0 12px; }
+.continue-practice { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.sample-callout { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; padding: 5px 1px; }
+.sample-callout .btn { flex: 0 0 auto; }
 
 /* add music */
 .uploader { display: grid; gap: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin: 0 0 8px; box-shadow: var(--shadow); }
 .uploader .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .uploader .actions .btn { padding: 0 8px; white-space: nowrap; }
 .uploader .actions .btn:not(.big) { font-size: 0.95rem; gap: 6px; }
+.uploader .actions .btn:has(:disabled) { opacity: 0.55; cursor: default; }
 .uploader .actions .btn.big { grid-column: 1 / -1; }
 .uploader .tip { margin: 0; }
 .thumbs { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; scroll-snap-type: x proximity; }
@@ -113,6 +117,22 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 .okline svg { color: var(--ok); }
 .review .row .btn.big { flex: 2 1 160px; }
 .review .row .btn { flex: 1 1 110px; white-space: nowrap; padding: 0 12px; }
+.bar-review-dialog { width: min(760px, calc(100% - 24px)); max-height: calc(100dvh - 24px); padding: 0 16px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); color: var(--text); }
+.bar-review-dialog::backdrop { background: rgb(0 0 0 / 65%); }
+.bar-review-header { position: sticky; top: 0; z-index: 3; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-block: 8px; background: var(--panel); }
+.bar-review-comparison { display: grid; gap: 12px; }
+.bar-review-comparison section { min-width: 0; }
+.bar-review-comparison h4 { margin: 8px 0; }
+.bar-review-comparison .score { margin: 4px 0 8px; }
+.bar-review-source .picker-one, .bar-review-comparison p { margin-bottom: 8px; }
+.bar-review-image { position: relative; display: block; width: 100%; margin: 0; padding: 0; border: 0; background: var(--paper); cursor: crosshair; touch-action: manipulation; }
+.bar-review-image img, .bar-review-cropped { display: block; width: 100%; height: auto; }
+.bar-review-cropped { margin-bottom: 8px; }
+.crop-point { position: absolute; width: 15px; height: 15px; border: 2px solid #fff; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 2px #231c10; background: var(--accent); pointer-events: none; }
+.crop-cursor { display: none; background: transparent; }
+.bar-review-image:focus-visible .crop-cursor { display: block; }
+.bar-review-actions { margin-top: 10px; }
+@media (min-width: 640px) { .bar-review-comparison { grid-template-columns: 1fr 1fr; } }
 
 .warn { margin: 8px 0; padding: 10px 12px; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); font-size: 0.92rem; }
 .warn ul { margin: 6px 0 0; padding-left: 18px; }

@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { deleteScore, listScores, type SavedScore } from '@/lib/library';
+import { lastPracticedId, practiceBar, PRACTICE_SAMPLE_ID } from '@/lib/practiceProgress';
 import { INSTRUMENTS } from '@/lib/instruments';
 import Uploader from '@/components/Uploader';
 import { BrandMark, ChevronIcon, TrashIcon } from '@/components/Icons';
@@ -19,9 +20,11 @@ export default function Home() {
   const [failed, setFailed] = useState(false);
   const [confirm, setConfirm] = useState<string | null>(null);
   const [addTo, setAddTo] = useState<string | undefined>(undefined);
+  const [lastPlayed, setLastPlayed] = useState<string | null>(null);
   useEffect(() => { try { setAddTo(new URLSearchParams(window.location.search).get('addTo') ?? undefined); } catch { /* ignore */ } }, []);
-  const refresh = () => listScores().then((s) => { setScores(s); setFailed(false); }).catch(() => { setScores([]); setFailed(true); });
+  const refresh = () => listScores().then((s) => { setScores(s); setLastPlayed(lastPracticedId()); setFailed(false); }).catch(() => { setScores([]); setFailed(true); });
   useEffect(() => { refresh(); }, []);
+  const resume = scores?.find((s) => s.id === lastPlayed);
 
   return (
     <main className="page home">
@@ -29,12 +32,28 @@ export default function Home() {
         <BrandMark size={44} />
         <div>
           <h1 className="brand">Brass Reader</h1>
-          <p className="muted">Snap your part, hear it, and play it on any brass instrument.</p>
+          <p className="muted">Scan sheet music and play along on five supported brass instruments.</p>
         </div>
       </header>
 
+      {!addTo && resume && (
+        <Link href={`/score/${resume.id}?resume=1`} className="libitem continue-practice">
+          <span className="libtext">
+            <strong>Continue practice</strong>
+            <span className="muted small">{resume.title} · {practiceBar(resume.id)}</span>
+          </span>
+          <ChevronIcon size={20} className="chev" />
+        </Link>
+      )}
+
       <h2 className="sec">Add music</h2>
       <Uploader addTo={addTo} />
+      {!addTo && (
+        <div className="sample-callout">
+          <span className="muted small">Hear an eight-bar tune with fingerings and a Junkanoo drum groove.</span>
+          <Link href={`/score/${PRACTICE_SAMPLE_ID}`} className="btn ghost">Try a sample</Link>
+        </div>
+      )}
 
       <h2 className="sec">Your music</h2>
       {scores === null && <p className="muted loading-line"><span className="spinner" aria-hidden /> Loading your music…</p>}

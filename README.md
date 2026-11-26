@@ -6,10 +6,13 @@ Reading is automatic and can make mistakes. Always check the notes against your 
 
 ## Using it at rehearsal
 
+Tap **Try a sample** to play an eight-bar practice tune with fingerings and the Junkanoo drum groove. **Continue practice** reopens your last saved tune at the bar you reached, using your last set tempo.
+
 1. **Add the music.** Tap **Take a photo** (or **Photos or PDF** for pictures you already have, up to 6 pages). Lay the page flat in good light, fill the frame, and hold the phone straight above it. One page per photo. If a photo comes out sideways, tap the round arrow on it. Put the pages in order with the arrows under them.
 2. **Say what it is written for** if you know (for example Trombone). If you leave it on "Detect from the music", treble clef is taken as Bb trumpet and bass clef as trombone. If the page is a score with several instruments, open "The page shows several instruments" and type the name of your part.
 3. **Tap Read.** It usually takes 20 to 60 seconds. Keep the screen open.
 4. **Check the reading.** The app shows the clef, key, time signature and number of bars it found, plus a list of bars it is not sure about ("Bar 7 may be misread"). Compare with the top of your page.
+   - Tap **Check bar** to see the original page and play the scanned bar. Select the bar by tapping two opposite corners on the page. **Retry this bar** sends only the selected excerpt to the main reader. Compare or play the new reading, then choose whether to keep it. The original page is available while this review is open.
    - Key signature wrong? Choose the right one from the list and the notes are corrected on the spot.
    - Clef or time signature wrong, or lots of bars flagged? Tap **Read again**, or retake the photo closer and sharper.
    - Several parts found? Choose yours.
@@ -20,7 +23,7 @@ Reading is automatic and can make mistakes. Always check the notes against your 
    - **Click** turns on a metronome. **Count-in** gives you one bar of clicks before the music starts (before a pickup it counts up to the pickup).
    - **Play as** changes the instrument: the sound and the written notes. **Written for** is what the page was printed for; change it if the notes sound a step or more off.
    - **A−** and **A+** change the size of the music on the full sheet. Turning the phone sideways gives the score the whole screen.
-   - **Full sheet / 2 bars** (under the score) switches between the whole page and just the bar being played and the next one, drawn large with fingerings. See "2-bar view and video" below.
+   - **Full sheet / 2 bars** (above the score) switches between the whole page and just the bar being played and the next one, drawn large with fingerings. See "2-bar view and video" below.
    - Bars the reader was unsure about are underlined in red with a small question mark. "Bars to check" lists them; tap a line to jump to that bar.
 6. **Take it with you.** **Download MIDI** and **Download MusicXML** save the part as shown (for your chosen instrument and tempo). **Download video** makes a play-along video of it.
 
@@ -28,7 +31,7 @@ Everything you read is kept in **Your music** on that phone or computer, so you 
 
 ## 2-bar view and video
 
-**Two bars at a time.** Under the score is a switch: **Full sheet / 2 bars**. "2 bars" shows only the bar being played and the bar that comes next, as large as the screen allows, with the fingering under every note. When the music reaches the next bar the view moves on with it; repeats, loops and bar jumps are followed. Hold the phone upright and the two bars sit one above the other; turn it sideways and they sit side by side. The choice is remembered for each tune. Tap a bar to jump to it, press and hold to loop it; drums, pitch-check colours and range warnings work as on the full sheet. **A−** and **A+** are not shown here, because the two bars always fill the screen.
+**Two bars at a time.** Above the score is a switch: **Full sheet / 2 bars**. "2 bars" shows only the bar being played and the bar that comes next, as large as the screen allows, with the fingering under every note. When the music reaches the next bar the view moves on with it; repeats, loops and bar jumps are followed. Hold the phone upright and the two bars sit one above the other; turn it sideways and they sit side by side. The choice is remembered for each tune. Tap a bar to jump to it, press and hold to loop it; drums, pitch-check colours and range warnings work as on the full sheet. **A−** and **A+** are not shown here, because the two bars always fill the screen.
 
 **Fingering style.** **Numbers** (1-3, 0 = open), **Valve dots** (three circles, a filled one is a pressed valve), **Both**, or **Off**. A trombone gets the slide position number, with a small picture of the slide. Choose it under the two bars or in **Practice**, **Fingerings**: it is one setting, used by the 2-bar view, the videos and the full sheet (tick "Show fingerings on the full sheet too"; there you can tap a fingering for another way to play the note). Rests have no fingering, a tied note has one only where it starts, and a dash means the note is outside the chart.
 
@@ -128,7 +131,7 @@ The two limits are kept in the server's memory. On Vercel each server instance c
 ### Put it on Vercel
 
 1. Push the repository and import it in Vercel ("Add New Project").
-2. Set **Root Directory** to `brass-reader`.
+2. Leave **Root Directory** at the repository root.
 3. Under Settings, Environment Variables add `ANTHROPIC_API_KEY` and `APP_PASSCODE` (and any optional ones).
 4. Deploy, open the address on your phone, enter the passcode on the first scan.
 
