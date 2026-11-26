@@ -58,3 +58,6 @@ Start a fresh chat with: "Read HANDOFF.md and continue." Sonnet is enough for mo
   Claude-Session: https://claude.ai/code/session_01WPNtdVdXxiy2wHAzy8VcDE
   ```
 - No model names in code or docs.
+
+## Save points
+- `save/v1.0-junkanoo` (branch, commit e03f3c2): working app with the Junkanoo groove (tum tum "number 1"). Vercel deployment `dpl_GMZLYknwUYdEu2BKe5uBRqwaJphc` is this version: to go back instantly, promote or redeploy it in Vercel; to go back in code, restore `main` from this branch.
