@@ -55,6 +55,7 @@ const lastTake: Partial<Record<KitInst, number>> = {};
 /** How much each hit differs from the last: a little in pitch (a drum more than a bell) and in loudness. */
 const HUMAN: Record<KitInst, { pitch: number; level: number }> = {
   bass: { pitch: 0.012, level: 0.07 }, lead: { pitch: 0.016, level: 0.1 }, cowHi: { pitch: 0.003, level: 0.1 }, cowLo: { pitch: 0.003, level: 0.1 }, whistle: { pitch: 0.006, level: 0.06 },
+  cymbal: { pitch: 0.01, level: 0.08 }, jkBass: { pitch: 0.01, level: 0.06 }, tumHi: { pitch: 0.012, level: 0.08 }, tumLo: { pitch: 0.012, level: 0.08 },
 };
 
 /** Which take of a kit sound is played, and how far its pitch and loudness are nudged. */

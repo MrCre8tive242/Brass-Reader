@@ -20,6 +20,31 @@ async function hold(page: Page, label: string) {
 }
 
 test.describe('D2. starter kit', () => {
+  test('the built-in Junkanoo groove: no starter warning, plays, copies, and is picked under the score', async ({ page }) => {
+    const errs = collectConsoleErrors(page);
+    await openDrone(page, 'kitj');
+    await openStudio(page);
+    const row = page.getByTestId('builtin-row');
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText('Junkanoo');
+    await expect(row).not.toContainText(LABEL);
+    await page.getByRole('button', { name: 'Play Junkanoo', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Stop Junkanoo', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Stop Junkanoo', exact: true }).click();
+    await page.getByRole('button', { name: 'Edit a copy of Junkanoo', exact: true }).click();
+    await expect(page.getByTestId('kit-editor')).toBeVisible();
+    await expect(page.getByTestId('starter-label')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Cymbals step 3: accent', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Deep bass drum step 1: accent', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Tum tum high step 3: on', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Back to grooves' }).click();
+    await page.getByRole('button', { name: 'Close grooves' }).click();
+    await page.getByLabel('Groove', { exact: true }).selectOption({ label: 'Junkanoo' });
+    await expect(page.getByTestId('drums-starter-label')).toHaveCount(0);
+    await expect(page.getByLabel('Drums on')).toBeChecked();
+    expect(errs).toEqual([]);
+  });
+
   test('starter patterns carry the label and can be copied and edited', async ({ page }) => {
     const errs = collectConsoleErrors(page);
     await openDrone(page, 'kit1');
@@ -111,7 +136,7 @@ test.describe('D2. starter kit', () => {
     await page.getByLabel('Preview tempo BPM').blur();
     await page.getByRole('button', { name: 'Hear the pattern' }).click();
     await expect(page.locator('.cell.now').first()).toBeVisible();
-    await expect(page.locator('.cell.now')).toHaveCount(5); // one step of every instrument
+    await expect(page.locator('.cell.now')).toHaveCount(9); // one step of every instrument
     const col = async () => page.locator('.kitrow').first().locator('.cell').evaluateAll((els) => els.findIndex((e) => e.classList.contains('now')));
     const seen = new Set<number>();
     for (let i = 0; i < 25; i++) { seen.add(await col()); await page.waitForTimeout(60); }

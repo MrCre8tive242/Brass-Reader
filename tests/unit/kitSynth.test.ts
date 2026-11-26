@@ -103,6 +103,24 @@ describe('starter kit sounds (rendered samples)', () => {
     expect(Math.max(...env) / Math.min(...env)).toBeGreaterThan(1.3);
   });
 
+  it('the tum tum is pitched high, the low one under it, and it has no noise in it (noise sounded like snare wires)', () => {
+    const note = (y: Float32Array) => peaks(spectrum(y, RATE, Math.round(0.02 * RATE), Math.round(0.12 * RATE)), 1)[0][0];
+    const hi = renderKit('tumHi', 1, 1, RATE), lo = renderKit('tumLo', 1, 1, RATE);
+    expect(note(hi)).toBeGreaterThan(430);
+    expect(note(hi)).toBeLessThan(490);
+    expect(note(lo)).toBeGreaterThan(300);
+    expect(note(lo)).toBeLessThan(360);
+    // pure tones: almost nothing above 3 kHz, where snare-wire buzz lives
+    for (const y of [hi, renderKit('tumHi', 2, 0, RATE), renderKit('jkBass', 2, 0, RATE)]) {
+      const sp = spectrum(y, RATE, 0, Math.round(0.05 * RATE));
+      const high = sp.filter(([f]) => f > 3000).reduce((a, [, m]) => a + m * m, 0), all = sp.reduce((a, [, m]) => a + m * m, 0);
+      expect(high / all).toBeLessThan(0.01);
+    }
+    // the cymbal is the bright one
+    const cy = spectrum(renderKit('cymbal', 2, 0, RATE), RATE, 0, Math.round(0.05 * RATE));
+    expect(cy.filter(([f]) => f > 3000).reduce((a, [, m]) => a + m * m, 0) / cy.reduce((a, [, m]) => a + m * m, 0)).toBeGreaterThan(0.5);
+  });
+
   it('no two takes are the same, and the same take is always the same', () => {
     for (const k of KIT_INSTS) {
       const a = renderKit(k.id, 1, 0, RATE), b = renderKit(k.id, 1, 1, RATE), c = renderKit(k.id, 1, 2, RATE);

@@ -103,9 +103,24 @@ describe('step grid', () => {
     expect(q.tracks.bass.filter(Boolean)).toHaveLength(1);
   });
   it('starter patterns are valid and carry the plan label', () => {
-    expect(STARTERS).toHaveLength(3);
+    expect(STARTERS.filter((s) => !s.traditional)).toHaveLength(3);
     for (const s of STARTERS) { const g = starterGroove(s.id)!; expect(g.starter).toBe(true); expect(grooveBarHits(g, 0).length).toBeGreaterThan(6); }
     expect(rowFromText('X . o x')).toEqual([3, 0, 1, 2]);
+  });
+  it('the built-in Junkanoo groove: bar 31 of the player\'s score, no starter warning', () => {
+    const g = starterGroove('junkanoo')!;
+    expect(g.name).toBe('Junkanoo');
+    expect(g.traditional).toBe(true);
+    expect(g.starter).toBe(true); // built in: cannot be renamed or deleted
+    const at = (inst: string) => grooveBarHits(g, 0).filter((h) => h.inst === inst).map((h) => h.timeQ);
+    expect(at('cymbal')).toEqual([0.5, 1.5, 2.5, 3.5]); // the off-beats
+    expect(at('jkBass')).toEqual([0, 1.5, 2, 3.5]); // BOOM . . ka BOOM . . ka
+    expect(grooveBarHits(g, 0).filter((h) => h.inst === 'jkBass' && h.vel === 1).map((h) => h.timeQ)).toEqual([0, 2]);
+    expect(grooveBarHits(g, 0).filter((h) => h.inst === 'tumHi' && h.vel === 1).map((h) => h.timeQ)).toEqual([0, 1, 2, 3]);
+    expect(at('tumHi')).toHaveLength(13);
+    expect(at('tumLo')).toEqual([0, 0.75, 1.5, 2, 2.75, 3.5]);
+    for (const k of ['bass', 'lead', 'cowHi', 'cowLo', 'whistle']) expect(at(k)).toEqual([]);
+    expect(starterGroove('starter-a')!.traditional).toBeUndefined();
   });
   it('places steps straight, in 12, or swung', () => {
     expect(stepBeat(5, 16, 'straight')).toBe(1.25);

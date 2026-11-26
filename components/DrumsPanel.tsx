@@ -15,7 +15,8 @@ interface Props {
 export default function DrumsPanel({ settings, grooves, status, onChange, onOpenStudio }: Props) {
   const g = grooves.find((x) => x.id === settings.grooveId);
   const mine = grooves.filter((x) => !x.starter);
-  const starters = grooves.filter((x) => x.starter);
+  const builtIn = grooves.filter((x) => x.starter && x.traditional);
+  const starters = grooves.filter((x) => x.starter && !x.traditional);
   return (
     <div className="drumspanel">
       <label className="field">
@@ -23,10 +24,11 @@ export default function DrumsPanel({ settings, grooves, status, onChange, onOpen
         <select className="sel txt" aria-label="Groove" value={g ? g.id : ''} onChange={(e) => onChange({ grooveId: e.target.value || null })}>
           <option value="">None</option>
           {mine.length > 0 && <optgroup label="Your grooves">{mine.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</optgroup>}
+          {builtIn.length > 0 && <optgroup label="Built in">{builtIn.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</optgroup>}
           <optgroup label="Starter patterns">{starters.map((x) => <option key={x.id} value={x.id}>{x.name} (starter, not traditional)</option>)}</optgroup>
         </select>
       </label>
-      {g?.starter && <p className="starter-note" data-testid="drums-starter-label">{STARTER_LABEL}</p>}
+      {g?.starter && !g.traditional && <p className="starter-note" data-testid="drums-starter-label">{STARTER_LABEL}</p>}
       {status && <p className="muted small" role="status" data-testid="drums-status">{status}</p>}
       {g ? (
         <>

@@ -5,13 +5,18 @@ export type Feel = 'straight' | 'triplet';
 
 // ---------- the starter kit ----------
 
-export type KitInst = 'bass' | 'lead' | 'cowHi' | 'cowLo' | 'whistle';
+export type KitInst = 'bass' | 'lead' | 'cowHi' | 'cowLo' | 'whistle' | 'cymbal' | 'jkBass' | 'tumHi' | 'tumLo';
 export const KIT_INSTS: { id: KitInst; label: string; gm: number }[] = [
   { id: 'bass', label: 'Bass drum', gm: 36 },
   { id: 'lead', label: 'Lead drum', gm: 47 },
   { id: 'cowHi', label: 'Cowbell high', gm: 56 },
   { id: 'cowLo', label: 'Cowbell low', gm: 56 },
   { id: 'whistle', label: 'Whistle', gm: 72 },
+  // the Junkanoo groove's kit (the player's own band): cymbals, a deep bass drum, and the hand-played tum tum
+  { id: 'cymbal', label: 'Cymbals', gm: 49 },
+  { id: 'jkBass', label: 'Deep bass drum', gm: 35 },
+  { id: 'tumHi', label: 'Tum tum high', gm: 63 },
+  { id: 'tumLo', label: 'Tum tum low', gm: 64 },
 ];
 const GM_OF = Object.fromEntries(KIT_INSTS.map((k) => [k.id, k.gm])) as Record<KitInst, number>;
 
@@ -80,8 +85,24 @@ const pat = (bars: string[][]): KitPattern => {
   bars.forEach((rows, b) => KIT_INSTS.forEach((k, ki) => { rowFromText(rows[ki] ?? '').forEach((v, i) => { p.tracks[k.id][b * 16 + i] = v; }); }));
   return p;
 };
+/** A one-bar, 16-step pattern from named rows. */
+function named(rows: Partial<Record<KitInst, string>>): KitPattern {
+  const p = emptyPattern(16, 1);
+  for (const [k, r] of Object.entries(rows) as [KitInst, string][]) rowFromText(r).forEach((v, i) => { p.tracks[k][i] = v; });
+  return p;
+}
 // rows: bass, lead, cowbell high, cowbell low, whistle (docs/GROOVE_RESEARCH.md, section 3). Hypotheses, not transcriptions.
-export const STARTERS: { id: string; name: string; pattern: KitPattern }[] = [
+export const STARTERS: { id: string; name: string; pattern: KitPattern; traditional?: boolean }[] = [
+  {
+    // from the player's own score (bar 31: cymbals, bass drums, drum set played on a tum tum), approved by ear at 125 BPM
+    id: 'junkanoo', name: 'Junkanoo', traditional: true,
+    pattern: named({
+      cymbal: '..X...X...X...X.',
+      jkBass: 'X.....x.X.....x.',
+      tumHi: 'X.xxX.xxXxxxX.xx',
+      tumLo: 'x..x..x.x..x..x.',
+    }),
+  },
   {
     id: 'starter-a', name: 'A · Pulse',
     pattern: pat([['X...x...X...x...', '......x.......x.', '..x...x...x...x.', 'x...x...x...x...', '............X.x.']]),
@@ -108,6 +129,8 @@ export interface Groove {
   createdAt: number;
   /** Built in (the starter patterns): cannot be renamed or deleted. */
   starter?: boolean;
+  /** A built-in groove taken from a real score (not a guessed starter): shown without the starter warning. */
+  traditional?: boolean;
   // recorded
   bpm?: number;
   bars?: number;
@@ -131,7 +154,8 @@ export interface Groove {
 
 export function starterGroove(id: string): Groove | null {
   const s = STARTERS.find((x) => x.id === id);
-  return s ? { id: s.id, name: `Starter ${s.name}`, kind: 'kit', createdAt: 0, starter: true, feel: 'straight', pattern: s.pattern } : null;
+  if (!s) return null;
+  return { id: s.id, name: s.traditional ? s.name : `Starter ${s.name}`, kind: 'kit', createdAt: 0, starter: true, ...(s.traditional ? { traditional: true } : {}), feel: 'straight', pattern: s.pattern };
 }
 export const starterGrooves = (): Groove[] => STARTERS.map((s) => starterGroove(s.id)!);
 

@@ -69,3 +69,9 @@ Final run: 351 vitest unit tests, 73 Playwright e2e tests (63 earlier + 10 new; 
 
 ### Refine pass
 The recording analysis, the slicing and playback of recorded hits, the kit sounds and the step editor were reworked after this was written: see "Phase 2 Refinement Log" in PHASE2_PLAN.md (sections 1, 2 and 4). In short: `detectOnsets` returns `starts` and `levels` too, `estimateTempo` takes options (`hint`, `near`, `levels`, `from`) and is the primary tempo source, slices carry a lead-in (`Slice.pre`) and cross-fade, `playbackRateFor` eases instead of snapping, the kit is rendered by `lib/kitSynth.ts`, and `useGroovePreview` loops until stopped.
+
+### Built-in "Junkanoo" groove
+- Taken from the player's own score (bar 31: Cymbals, Bass Drums, Drum Set), with the sounds tuned with the player by ear at 125 BPM.
+- 4 new kit instruments (`lib/groove.ts` `KIT_INSTS`, sounds in `lib/kitSynth.ts`): `cymbal` (off-beats), `jkBass` "Deep bass drum" (1, 2&, 3, 4&; accents on 1 and 3), `tumHi`/`tumLo` "Tum tum" (the drum-set line played on a tum tum: a Remo Pinstripe-type head on an open barrel with the bottom cut out, played by hand; no noise in the sound, because noise sounded like snare wires).
+- It lives in `STARTERS` with `traditional: true`: built in (cannot be deleted), listed under "Built in", and shown WITHOUT the starter warning. The studio previews it at 125 BPM; under a score it follows the score's tempo.
+- Not checked: the drum-set rhythm was read from a blurry photo (16ths under a yellow highlight), so the tum tum pattern is close but may not be exact. The player can fix it with "Edit a copy".

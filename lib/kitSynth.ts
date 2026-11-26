@@ -202,6 +202,73 @@ function whistle(tier: Tier, take: number, rate: number): Float32Array {
   return finish(y, rate, 0.26 * TIER_VEL[tier] ** 0.6);
 }
 
+// ---------- the Junkanoo groove's kit (tuned with the player by ear) ----------
+
+/** Fade the tail over its last `s` seconds: a long ring cut to fit the buffer should die away, not stop. */
+function tail(y: Float32Array, rate: number, s: number) {
+  const n = y.length, f = Math.min(n, Math.round(s * rate));
+  for (let i = 0; i < f; i++) y[n - 1 - i] *= (i / f) ** 2;
+}
+
+/** Marching cymbals on the off-beats: a short splash of bright noise. */
+function cymbal(tier: Tier, take: number, rate: number): Float32Array {
+  const r = rng(12000 + tier * 43 + take * 131);
+  const n = Math.round(0.35 * rate);
+  const y = new Float32Array(n);
+  // white noise differenced twice: the low end goes, the sizzle stays
+  let w1 = 0, w2 = 0;
+  for (let i = 0; i < n; i++) {
+    const w = (r() + r() + r() - 1.5) * 2;
+    const d1 = w - w1, d2 = d1 - w2;
+    w1 = w; w2 = d1;
+    y[i] = d2 * Math.exp(-i / rate / 0.09);
+  }
+  const at = Math.max(2, Math.round(0.001 * rate));
+  for (let i = 0; i < at && i < n; i++) y[i] *= i / at;
+  return finish(y, rate, 0.9 * TIER_VEL[tier] ** 0.85);
+}
+
+/** The deep bass drum: a boom that drops a little in pitch and rings, with no slap noise on it. */
+function deepBass(tier: Tier, take: number, rate: number): Float32Array {
+  const r = rng(13000 + tier * 47 + take * 137);
+  const n = Math.round(0.58 * rate);
+  const y = new Float32Array(n);
+  const tune = 1 + (r() - 0.5) * 0.02 + (take - 1) * 0.012;
+  const f0 = 68 * tune, fb = 35 * tune, ts = 0.07;
+  for (let i = 0; i < n; i++) {
+    const t = i / rate;
+    const ph = TAU * (f0 * t + fb * ts * (1 - Math.exp(-t / ts)));
+    y[i] = Math.sin(ph) * Math.exp(-t / 0.38) + 0.35 * Math.sin(1.59 * ph) * Math.exp(-t / 0.18) + 0.2 * Math.sin(2.3 * ph) * Math.exp(-t / 0.08);
+  }
+  const at = Math.max(2, Math.round(0.0012 * rate));
+  for (let i = 0; i < at; i++) y[i] *= 0.5 - 0.5 * Math.cos((Math.PI * i) / at);
+  tail(y, rate, 0.12);
+  return finish(y, rate, 0.85 * TIER_VEL[tier] ** 0.85);
+}
+
+/**
+ * The tum tum: a drum-kit head (Remo Pinstripe type: two plies, few overtones) on an open barrel with the bottom cut
+ * out, played with the hand. Soft attack (no stick), little pitch bend (no second head), a fat short tone, and on
+ * accents a slap made only of the head's own tones. No noise at all: noise here sounds like snare wires.
+ */
+function tumTum(f0: number, peak: number, tier: Tier, take: number, rate: number): Float32Array {
+  const r = rng(14000 + f0 * 5 + tier * 53 + take * 139);
+  const n = Math.round(0.3 * rate);
+  const y = new Float32Array(n);
+  const tune = 1 + (r() - 0.5) * 0.02 + (take - 1) * 0.015; // two hands, never quite the same spot
+  const f = f0 * tune, dec = 0.07;
+  const slap = [0.05, 0.12, 0.7][tier];
+  for (let i = 0; i < n; i++) {
+    const t = i / rate;
+    const ph = TAU * f * (t + 0.08 * 0.015 * (1 - Math.exp(-t / 0.015)));
+    const body = Math.sin(ph) * Math.exp(-t / dec) + 0.18 * Math.sin(1.59 * ph) * Math.exp(-t / (dec * 0.4))
+      + 0.35 * Math.sin(TAU * f * 0.55 * t) * Math.exp(-t / 0.03); // the palm's thump
+    const pop = (Math.sin(2 * ph) + 0.4 * Math.sin(3 * ph)) * Math.exp(-t / 0.01);
+    y[i] = Math.min(1, t / 0.0025) * (body + slap * 1.2 * pop);
+  }
+  return finish(y, rate, peak * TIER_VEL[tier]);
+}
+
 /** One take of one kit sound as samples (mono, starts and ends at zero). */
 export function renderKit(inst: KitInst, tier: Tier, take: number, rate: number): Float32Array {
   const k = ((take % KIT_TAKES) + KIT_TAKES) % KIT_TAKES;
@@ -211,5 +278,9 @@ export function renderKit(inst: KitInst, tier: Tier, take: number, rate: number)
     case 'cowHi': return bell(BELL_HI, tier, k, rate);
     case 'cowLo': return bell(BELL_LO, tier, k, rate);
     case 'whistle': return whistle(tier, k, rate);
+    case 'cymbal': return cymbal(tier, k, rate);
+    case 'jkBass': return deepBass(tier, k, rate);
+    case 'tumHi': return tumTum(460, 0.46, tier, k, rate);
+    case 'tumLo': return tumTum(330, 0.4, tier, k, rate);
   }
 }

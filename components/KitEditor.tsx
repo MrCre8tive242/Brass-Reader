@@ -159,10 +159,10 @@ export default function KitEditor({ getCtx, existing, from, onSave, onCancel }: 
         <span className="plabel">Start from a starter pattern</span>
         <select className="sel txt" aria-label="Start from a starter pattern" value="" onChange={(e) => {
           const s = STARTERS.find((x) => x.id === e.target.value);
-          if (s) { setPattern(s.pattern); setName(`My ${s.name}`); setStarter(true); }
+          if (s) { setPattern(s.pattern); setName(`My ${s.name}`); setStarter(!s.traditional); }
         }}>
           <option value="">Choose…</option>
-          {STARTERS.map((s) => <option key={s.id} value={s.id}>{s.name} (starter)</option>)}
+          {STARTERS.map((s) => <option key={s.id} value={s.id}>{s.traditional ? s.name : `${s.name} (starter)`}</option>)}
         </select>
       </label>
       <label className="field">

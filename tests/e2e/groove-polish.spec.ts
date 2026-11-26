@@ -50,10 +50,12 @@ test('your own grooves are listed before the starter patterns; the recorder is a
   await open(page, 'gp4');
   // nothing of your own yet: starters first
   const order = () => page.getByTestId('groove-studio').locator('h3.sec').allTextContents();
-  expect((await order())[0]).toBe('Starter patterns');
+  expect((await order()).slice(0, 2)).toEqual(['Built in', 'Starter patterns']);
+  await expect(page.getByTestId('builtin-row')).toHaveCount(1);
+  await expect(page.getByTestId('builtin-row')).toContainText('Junkanoo');
   await importIt(page, 'Mine', kitFile('Mine'));
   await expect(page.getByTestId('groove-row')).toHaveCount(1);
-  expect(await order()).toEqual(['Your grooves', 'Starter patterns']);
+  expect(await order()).toEqual(['Your grooves', 'Built in', 'Starter patterns']);
   await page.getByRole('button', { name: 'Record your drum line' }).click();
   const steps = page.getByTestId('rec-steps');
   await expect(steps).toContainText('1 Record');

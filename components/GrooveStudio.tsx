@@ -95,7 +95,7 @@ export default function GrooveStudio({ getCtx, clickBpm, onClose, onChanged }: P
       const buf = await decode(g);
       if (g.kind === 'recorded' && !buf) { fail(); return; }
       setPreviewId(g.id);
-      preview.play(g, buf, g.kind === 'recorded' ? g.bpm ?? 100 : 110);
+      preview.play(g, buf, g.kind === 'recorded' ? g.bpm ?? 100 : g.traditional ? 125 : 110);
     } catch { fail(); }
   }
 
@@ -199,21 +199,26 @@ export default function GrooveStudio({ getCtx, clickBpm, onClose, onChanged }: P
               )}
     </>
   );
+  const starterRow = (g: ReturnType<typeof starterGrooves>[number]) => (
+                  <li key={g.id} className="groove" data-testid={g.traditional ? 'builtin-row' : 'starter-row'}>
+                    <div className="ginfo"><strong>{g.name}</strong><span className="muted small">{meta(g)}</span>{rowError?.id === g.id && <p className="error" role="alert" data-testid="preview-error"><AlertIcon size={18} /> {rowError.text}</p>}</div>
+                    <div className="gbtns">
+                      <button type="button" className="btn sm" onClick={() => togglePreview(g)} aria-label={`${previewId === g.id ? 'Stop' : 'Play'} ${g.name}`}>{previewId === g.id ? 'Stop' : 'Play'}</button>
+                      <button type="button" className="btn sm" onClick={() => { preview.stop(); setView({ k: 'kit', from: { name: g.name.replace(/^Starter /, ''), pattern: g.pattern!, starter: !g.traditional } }); }} aria-label={`Edit a copy of ${g.name}`}>Edit a copy</button>
+                    </div>
+                  </li>
+  );
   const starterBlock = (
     <>
+            <h3 className="sec">Built in</h3>
+            <ul className="grooves" data-testid="builtin-list">
+              {starterGrooves().filter((g) => g.traditional).map(starterRow)}
+            </ul>
             <h3 className="sec">Starter patterns</h3>
             <div data-testid="starter-list">
               <p className="starter-note">{STARTER_LABEL}</p>
               <ul className="grooves">
-                {starterGrooves().map((g) => (
-                  <li key={g.id} className="groove" data-testid="starter-row">
-                    <div className="ginfo"><strong>{g.name}</strong><span className="muted small">{meta(g)}</span>{rowError?.id === g.id && <p className="error" role="alert" data-testid="preview-error"><AlertIcon size={18} /> {rowError.text}</p>}</div>
-                    <div className="gbtns">
-                      <button type="button" className="btn sm" onClick={() => togglePreview(g)} aria-label={`${previewId === g.id ? 'Stop' : 'Play'} ${g.name}`}>{previewId === g.id ? 'Stop' : 'Play'}</button>
-                      <button type="button" className="btn sm" onClick={() => { preview.stop(); setView({ k: 'kit', from: { name: g.name.replace(/^Starter /, ''), pattern: g.pattern!, starter: true } }); }} aria-label={`Edit a copy of ${g.name}`}>Edit a copy</button>
-                    </div>
-                  </li>
-                ))}
+                {starterGrooves().filter((g) => !g.traditional).map(starterRow)}
               </ul>
             </div>
     </>
