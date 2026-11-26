@@ -285,3 +285,17 @@ describe('runOmr with strips', () => {
     if (!out.ok) expect(out.code).toBe('not_music');
   });
 });
+
+describe('planStrips: a title with a wide gap under it', () => {
+  it('never becomes a strip of its own', () => {
+    // title (text, light ink) at 0..40, wide gap, then 6 systems of 5 staff lines each, gaps of 40
+    const h = 1000; const p = new Float32Array(h);
+    for (let y = 10; y < 40; y++) p[y] = 0.12;
+    let y0 = 160;
+    const sys: number[] = [];
+    for (let s = 0; s < 6; s++) { sys.push(y0); for (let l = 0; l < 5; l++) { p[y0 + l * 10] = 0.95; for (let k = 1; k < 10 && l < 4; k++) p[y0 + l * 10 + k] = 0.05; } y0 += 40 + 40 + 40; }
+    const cuts = planStrips(p.subarray(0, Math.min(h, y0)));
+    expect(cuts.length).toBeGreaterThan(0);
+    expect(cuts[0]).toBeGreaterThan(sys[0]); // the first cut is below the first staff, not under the title
+  });
+});

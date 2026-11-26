@@ -184,6 +184,17 @@ export function planStrips(profile: Float32Array, opts: { blank?: number; minBan
     bands.splice(worst, 2, { a: bands[worst].a, b: bands[worst + 1].b });
     gaps.splice(worst, 1);
   }
+  // a band without a staff line (a row inked across most of the width) is text (title, composer, tempo mark):
+  // it goes with the system below it (or above it, at the bottom of the page), never as a strip of its own
+  const hasStaff = (b: { a: number; b: number }) => { for (let y = b.a; y < b.b; y++) if (profile[y] >= 0.45) return true; return false; };
+  if (bands.some(hasStaff)) {
+    for (let i = 0; i < bands.length && bands.length > 1;) {
+      if (hasStaff(bands[i])) { i++; continue; }
+      const j = i < bands.length - 1 ? i : i - 1; // join with the next band (or the previous one if last)
+      bands.splice(j, 2, { a: bands[j].a, b: bands[j + 1].b });
+      gaps.splice(j, 1);
+    }
+  }
   const cuts = gaps;
   const systems = cuts.length + 1;
   if (systems <= 2) return [];
